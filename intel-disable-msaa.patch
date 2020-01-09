@@ -1,0 +1,16 @@
+diff -up mesa-20130625/src/mesa/drivers/dri/intel/intel_screen.c.jx mesa-20130625/src/mesa/drivers/dri/intel/intel_screen.c
+--- mesa-20130625/src/mesa/drivers/dri/intel/intel_screen.c.jx	2013-06-25 10:00:14.004079678 -0400
++++ mesa-20130625/src/mesa/drivers/dri/intel/intel_screen.c	2013-06-25 10:00:29.612162783 -0400
+@@ -1167,10 +1167,12 @@ intel_screen_make_configs(__DRIscreen *d
+          stencil_bits[1] = 8;
+       }
+ 
++#if 0 /* disable MSAA on EL6.4 due to kwin */
+       if (screen->gen >= 7)
+          num_msaa_modes = 2;
+       else if (screen->gen == 6)
+          num_msaa_modes = 1;
++#endif
+ 
+       new_configs = driCreateConfigs(formats[i],
+                                      depth_bits,

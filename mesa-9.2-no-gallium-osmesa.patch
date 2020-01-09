@@ -1,0 +1,29 @@
+diff -up mesa-20130514/configure.ac.jx mesa-20130514/configure.ac
+--- mesa-20130514/configure.ac.jx	2013-05-17 13:51:14.000000000 -0400
++++ mesa-20130514/configure.ac	2013-05-17 13:53:02.288582625 -0400
+@@ -763,11 +763,6 @@ if test "x$enable_dri" = xyes; then
+     GALLIUM_STATE_TRACKERS_DIRS="dri $GALLIUM_STATE_TRACKERS_DIRS"
+ fi
+
+-if test "x$enable_osmesa" = xyes; then
+-    GALLIUM_STATE_TRACKERS_DIRS="osmesa $GALLIUM_STATE_TRACKERS_DIRS"
+-    GALLIUM_TARGET_DIRS="$GALLIUM_TARGET_DIRS osmesa"
+-fi
+-
+ AC_SUBST([MESA_LLVM])
+
+ # Check for libdrm
+diff -up mesa-20130514/src/gallium/targets/Makefile.am.jx mesa-20130514/src/gallium/targets/Makefile.am
+--- mesa-20130514/src/gallium/targets/Makefile.am.jx	2013-05-17 13:51:14.000000000 -0400
++++ mesa-20130514/src/gallium/targets/Makefile.am	2013-05-17 14:30:33.091558931 -0400
+@@ -26,10 +26,6 @@ if HAVE_X11_DRIVER
+ SUBDIRS += libgl-xlib
+ endif
+
+-if HAVE_OSMESA
+-SUBDIRS += osmesa
+-endif
+-
+ if HAVE_GALLIUM_GBM
+ SUBDIRS += gbm
+ endif

@@ -1,0 +1,138 @@
+diff -up mesa-20130625/src/glx/dri2_glx.c.jx mesa-20130625/src/glx/dri2_glx.c
+--- mesa-20130625/src/glx/dri2_glx.c.jx	2013-06-25 07:34:15.000000000 -0400
++++ mesa-20130625/src/glx/dri2_glx.c	2013-06-25 10:03:44.026193202 -0400
+@@ -50,6 +50,8 @@
+ #include "xf86drm.h"
+ #include "dri2.h"
+ #include "dri_common.h"
++#include <sys/socket.h>
++#include <sys/un.h>
+ 
+ /* From xmlpool/options.h, user exposed so should be stable */
+ #define DRI_CONF_VBLANK_NEVER 0
+@@ -1126,6 +1128,21 @@ static const struct glx_screen_vtable dr
+    dri2_create_context_attribs
+ };
+ 
++static int
++display_might_not_be_local(Display *dpy)
++{
++    struct sockaddr sa;
++    socklen_t len = sizeof(sa);
++
++    if (getsockname(ConnectionNumber(dpy), &sa, &len))
++	return 0; /* be verbose on error */
++
++    if (sa.sa_family == AF_UNIX)
++	return 0;
++
++    return 1;
++}
++
+ static struct glx_screen *
+ dri2CreateScreen(int screen, struct glx_display * priv)
+ {
+@@ -1272,7 +1289,10 @@ dri2CreateScreen(int screen, struct glx_
+    return &psc->base;
+ 
+ handle_error:
+-   CriticalErrorMessageF("failed to load driver: %s\n", driverName);
++   if (display_might_not_be_local(priv->dpy))
++      ErrorMessageF("failed to load driver: %s\n", driverName);
++   else
++      CriticalErrorMessageF("failed to load driver: %s\n", driverName);
+ 
+    if (configs)
+        glx_config_destroy_list(configs);
+diff -up mesa-20130625/src/glx/dri_glx.c.jx mesa-20130625/src/glx/dri_glx.c
+--- mesa-20130625/src/glx/dri_glx.c.jx	2013-06-25 07:34:15.000000000 -0400
++++ mesa-20130625/src/glx/dri_glx.c	2013-06-25 10:03:44.027193207 -0400
+@@ -46,6 +46,8 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ #include <sys/mman.h>
+ #include "xf86drm.h"
+ #include "dri_common.h"
++#include <sys/socket.h>
++#include <sys/un.h>
+ 
+ struct dri_display
+ {
+@@ -789,6 +791,21 @@ static const struct glx_screen_vtable dr
+    NULL
+ };
+ 
++static int
++display_might_not_be_local(Display *dpy)
++{
++    struct sockaddr sa;
++    socklen_t len = sizeof(sa);
++
++    if (getsockname(ConnectionNumber(dpy), &sa, &len))
++	return 0; /* be verbose on error */
++
++    if (sa.sa_family == AF_UNIX)
++	return 0;
++
++    return 1;
++}
++
+ static struct glx_screen *
+ driCreateScreen(int screen, struct glx_display *priv)
+ {
+@@ -859,7 +876,10 @@ driCreateScreen(int screen, struct glx_d
+    return &psc->base;
+ 
+ cleanup:
+-   CriticalErrorMessageF("failed to load driver: %s\n", driverName);
++   if (display_might_not_be_local(priv->dpy))
++      ErrorMessageF("failed to load driver: %s\n", driverName);
++   else
++      CriticalErrorMessageF("failed to load driver: %s\n", driverName);
+ 
+    free(driverName);
+ 
+diff -up mesa-20130625/src/glx/drisw_glx.c.jx mesa-20130625/src/glx/drisw_glx.c
+--- mesa-20130625/src/glx/drisw_glx.c.jx	2013-06-25 07:34:15.000000000 -0400
++++ mesa-20130625/src/glx/drisw_glx.c	2013-06-25 10:03:44.028193210 -0400
+@@ -27,6 +27,8 @@
+ #include "glxclient.h"
+ #include <dlfcn.h>
+ #include "dri_common.h"
++#include <sys/socket.h>
++#include <sys/un.h>
+ 
+ struct drisw_display
+ {
+@@ -627,6 +629,21 @@ driswBindExtensions(struct drisw_screen
+    }
+ }
+ 
++static int
++display_might_not_be_local(Display *dpy)
++{
++    struct sockaddr sa;
++    socklen_t len = sizeof(sa);
++
++    if (getsockname(ConnectionNumber(dpy), &sa, &len))
++	return 0; /* be verbose on error */
++
++    if (sa.sa_family == AF_UNIX)
++	return 0;
++
++    return 1;
++}
++
+ static struct glx_screen *
+ driswCreateScreen(int screen, struct glx_display *priv)
+ {
+@@ -715,7 +732,10 @@ driswCreateScreen(int screen, struct glx
+    glx_screen_cleanup(&psc->base);
+    free(psc);
+ 
+-   CriticalErrorMessageF("failed to load driver: %s\n", SWRAST_DRIVER_NAME);
++   if (display_might_not_be_local(priv->dpy))
++      ErrorMessageF("failed to load driver: %s\n", SWRAST_DRIVER_NAME);
++   else
++      CriticalErrorMessageF("failed to load driver: %s\n", SWRAST_DRIVER_NAME);
+ 
+    return NULL;
+ }
