@@ -61,7 +61,7 @@
 Summary: Mesa graphics libraries
 Name: mesa
 Version: 18.0.5
-Release: 3%{?dist}
+Release: 4%{?dist}
 License: MIT
 Group: System Environment/Libraries
 URL: http://www.mesa3d.org
@@ -83,6 +83,10 @@ Patch2: dri-sw-xshm-support.patch
 
 # fix some timeout mismatch warnings (backport from upstream)
 Patch3: fix-timeout-warnings.patch
+
+# disable xshm
+Patch4: xshm-disable.patch
+
 Patch12: mesa-8.0.1-fix-16bpp.patch
 Patch15: mesa-9.2-hardware-float.patch
 Patch20: mesa-10.2-evergreen-big-endian.patch
@@ -328,6 +332,7 @@ grep -q ^/ src/gallium/auxiliary/vl/vl_decoder.c && exit 1
 %patch1 -p1 -b .nv50rtti
 %patch2 -p1 -b .xshm
 %patch3 -p1 -b .timeout
+%patch4 -p1 -b .noshm
 
 #patch12 -p1 -b .16bpp
 
@@ -659,6 +664,9 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Sat Dec 15 2018 Dave Airlie <airlied@redhat.com> - 18.0.5-4
+- disable shm put/get for now it caused regressions
+
 * Tue Jul 24 2018 Dave Airlie <airlied@redhat.com> - 18.0.5-3
 - rename fedora to system in glvnd fallback
 
