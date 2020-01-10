@@ -55,19 +55,19 @@
 
 %define _default_patch_fuzz 2
 
-%define gitdate 20171019
+#define gitdate 20180530
 #% define snapshot 
 
 Summary: Mesa graphics libraries
 Name: mesa
-Version: 17.2.3
-Release: 8.%{gitdate}%{?dist}
+Version: 18.0.5
+Release: 3%{?dist}
 License: MIT
 Group: System Environment/Libraries
 URL: http://www.mesa3d.org
 
-# Source0: MesaLib-%{version}.tar.xz
-Source0: %{name}-%{gitdate}.tar.xz
+Source0: mesa-%{version}.tar.xz
+#Source0: %{name}-%{gitdate}.tar.xz
 Source1: sanitize-tarball.sh
 Source2: make-release-tarball.sh
 Source3: make-git-snapshot.sh
@@ -77,23 +77,16 @@ Source3: make-git-snapshot.sh
 # Fedora opts to ignore the optional part of clause 2 and treat that code as 2 clause BSD.
 Source4: Mesa-MLAA-License-Clarification-Email.txt
 
-Patch0: mesa-17.3-final.patch
 Patch1: nv50-fix-build.patch
-Patch2: 0001-mesa-Squash-merge-of-S3TC-support.patch
-Patch9: mesa-8.0-llvmpipe-shmget.patch
+# backport of dri sw xshm support to help qxl
+Patch2: dri-sw-xshm-support.patch
+
+# fix some timeout mismatch warnings (backport from upstream)
+Patch3: fix-timeout-warnings.patch
 Patch12: mesa-8.0.1-fix-16bpp.patch
 Patch15: mesa-9.2-hardware-float.patch
 Patch20: mesa-10.2-evergreen-big-endian.patch
-
-# For bz1503861, fix visual artifacts on DRI PRIME offloading
-# Feel free to drop these patches during the next mesa rebase (>17.2.3)
-Patch30: 0001-intel-blorp-Use-mocs.tex-for-depth-stencil.patch
-Patch31: 0002-anv-blorp-Add-a-device-parameter-to-blorp_surf_for_a.patch
-Patch32: 0003-blorp-Turn-anv_CmdCopyBuffer-into-a-blorp_buffer_cop.patch
-Patch33: 0004-intel-blorp-Make-the-MOCS-setting-part-of-blorp_addr.patch
-Patch34: 0005-i965-Use-PTE-MOCS-for-all-external-buffers.patch
-
-Patch40: 0001-intel-Add-more-Coffee-Lake-PCI-IDs.patch
+Patch21: 0001-pkgconfig-Fix-gl.pc-when-glvnd-is-enabled.patch
 
 BuildRequires: pkgconfig autoconf automake libtool
 %if %{with_hardware}
@@ -119,7 +112,7 @@ BuildRequires: python-mako
 BuildRequires: gettext
 %if 0%{?with_llvm}
 %if 0%{?with_private_llvm}
-BuildRequires: llvm-private-devel >= 5.0
+BuildRequires: llvm-private-devel >= 6.0
 %else
 BuildRequires: llvm-devel >= 3.0
 %endif
@@ -133,11 +126,12 @@ BuildRequires: pkgconfig(wayland-client) >= 1.11
 BuildRequires: pkgconfig(wayland-server) >= 1.11
 BuildRequires: pkgconfig(wayland-protocols) >= 1.8.0
 %endif
-BuildRequires: mesa-libGL-devel
+# BuildRequires: mesa-libGL-devel
 %if 0%{?with_vdpau}
 BuildRequires: libvdpau-devel
 %endif
 BuildRequires: zlib-devel
+BuildRequires: libglvnd-devel
 
 %description
 Mesa
@@ -148,6 +142,7 @@ Group: System Environment/Libraries
 Provides: libGL
 Requires: mesa-libglapi = %{version}-%{release}
 Requires: libdrm >= 2.4.83
+Requires: libglvnd-glx%{?_isa} >= 1:1.0.1-0.7
 
 %description libGL
 Mesa libGL runtime library.
@@ -156,6 +151,7 @@ Mesa libGL runtime library.
 Summary: Mesa libEGL runtime libraries
 Group: System Environment/Libraries
 Requires: mesa-libgbm = %{version}-%{release}
+Requires: libglvnd-egl%{?_isa}
 
 %description libEGL
 Mesa libEGL runtime libraries
@@ -164,6 +160,7 @@ Mesa libEGL runtime libraries
 Summary: Mesa libGLES runtime libraries
 Group: System Environment/Libraries
 Requires: mesa-libglapi = %{version}-%{release}
+Requires: libglvnd-gles%{?_isa}
 
 %description libGLES
 Mesa GLES runtime libraries
@@ -200,6 +197,7 @@ Summary: Mesa libGL development package
 Group: Development/Libraries
 Requires: mesa-libGL = %{version}-%{release}
 Requires: gl-manpages
+Requires: libglvnd-devel%{?_isa}
 Provides: libGL-devel
 
 %description libGL-devel
@@ -209,6 +207,7 @@ Mesa libGL development package
 Summary: Mesa libEGL development package
 Group: Development/Libraries
 Requires: mesa-libEGL = %{version}-%{release}
+Requires: libglvnd-devel%{?_isa}
 Provides: khrplatform-devel = %{version}-%{release}
 Obsoletes: khrplatform-devel < %{version}-%{release}
 
@@ -219,6 +218,7 @@ Mesa libEGL development package
 Summary: Mesa libGLES development package
 Group: Development/Libraries
 Requires: mesa-libGLES = %{version}-%{release}
+Requires: libglvnd-devel%{?_isa}
 
 %description libGLES-devel
 Mesa libGLES development package
@@ -321,35 +321,19 @@ The drivers with support for the Vulkan API.
 %endif
 
 %prep
-#setup -q -n Mesa-%{version}%{?snapshot}
-%setup -q -n mesa-%{gitdate}
+%setup -q -n mesa-%{version}%{?snapshot}
+#setup -q -n mesa-%{gitdate}
 # make sure you run sanitize-tarball.sh on mesa source tarball or next line will exit
 grep -q ^/ src/gallium/auxiliary/vl/vl_decoder.c && exit 1
-%patch0 -p1 -b .mesa17.2.3
 %patch1 -p1 -b .nv50rtti
-%patch2 -p1 -b .s3tc
+%patch2 -p1 -b .xshm
+%patch3 -p1 -b .timeout
 
-# this fastpath is:
-# - broken with swrast classic
-# - broken on 24bpp
-# - not a huge win anyway
-# - ABI-broken wrt upstream
-# - eventually obsoleted by vgem
-#
-# dear ajax: fix this one way or the other
-#patch9 -p1 -b .shmget
 #patch12 -p1 -b .16bpp
 
 %patch15 -p1 -b .hwfloat
 #patch20 -p1 -b .egbe
-
-%patch30 -p1 -b .bz1503861_patch1
-%patch31 -p1 -b .bz1503861_patch2
-%patch32 -p1 -b .bz1503861_patch3
-%patch33 -p1 -b .bz1503861_patch4
-%patch34 -p1 -b .bz1503861_patch5
-
-%patch40 -p1 -b .cfl_ids
+%patch21 -p1 -b .glpc
 
 %if 0%{with_private_llvm}
 sed -i 's/\[llvm-config\]/\[llvm-private-config-%{__isa_bits}\]/g' configure.ac
@@ -383,6 +367,7 @@ export CXXFLAGS="$RPM_OPT_FLAGS -fno-rtti -fno-exceptions"
 
 %configure \
     %{?asm_flags} \
+    --enable-libglvnd \
     --enable-selinux \
     --enable-osmesa \
     --with-dri-driverdir=%{_libdir}/dri \
@@ -410,9 +395,6 @@ export CXXFLAGS="$RPM_OPT_FLAGS -fno-rtti -fno-exceptions"
 %endif
     %{?dri_drivers}
 
-# this seems to be neccessary for s390
-make -C src/mesa/drivers/dri/common/xmlpool/
-
 make %{?_smp_mflags} MKDEP=/bin/true
 
 %install
@@ -433,6 +415,17 @@ rm -f $RPM_BUILD_ROOT%{_sysconfdir}/drirc
 
 # libvdpau opens the versioned name, don't bother including the unversioned
 rm -f $RPM_BUILD_ROOT%{_libdir}/vdpau/*.so
+# likewise glvnd
+rm -f %{buildroot}%{_libdir}/libGLX_mesa.so
+rm -f %{buildroot}%{_libdir}/libEGL_mesa.so
+# XXX can we just not build this
+rm -f %{buildroot}%{_libdir}/libGLES*
+
+# XXX wayland-egl?
+
+# glvnd needs a default provider for indirect rendering where it cannot
+# determine the vendor
+ln -s %{_libdir}/libGLX_mesa.so.0 %{buildroot}%{_libdir}/libGLX_system.so.0
 
 # strip out useless headers
 rm -f $RPM_BUILD_ROOT%{_includedir}/GL/w*.h
@@ -479,18 +472,17 @@ rm -rf $RPM_BUILD_ROOT
 
 %files libGL
 %defattr(-,root,root,-)
-%{_libdir}/libGL.so.1
-%{_libdir}/libGL.so.1.*
+%{_libdir}/libGLX_mesa.so.0*
+%{_libdir}/libGLX_system.so.0*
 
 %files libEGL
 %defattr(-,root,root,-)
-%{_libdir}/libEGL.so.1
-%{_libdir}/libEGL.so.1.*
+%{_datadir}/glvnd/egl_vendor.d/50_mesa.json
+%{_libdir}/libEGL_mesa.so.0*
 
 %files libGLES
 %defattr(-,root,root,-)
-%{_libdir}/libGLESv2.so.2
-%{_libdir}/libGLESv2.so.2.*
+# no files, all provided by libglvnd
 
 %files filesystem
 %defattr(-,root,root,-)
@@ -569,7 +561,6 @@ rm -rf $RPM_BUILD_ROOT
 %dir %{_includedir}/GL/internal
 %{_includedir}/GL/internal/dri_interface.h
 %{_libdir}/pkgconfig/dri.pc
-%{_libdir}/libGL.so
 %{_libdir}/libglapi.so
 %{_libdir}/pkgconfig/gl.pc
 
@@ -584,7 +575,6 @@ rm -rf $RPM_BUILD_ROOT
 %dir %{_includedir}/KHR
 %{_includedir}/KHR/khrplatform.h
 %{_libdir}/pkgconfig/egl.pc
-%{_libdir}/libEGL.so
 
 %files libGLES-devel
 %defattr(-,root,root,-)
@@ -599,7 +589,6 @@ rm -rf $RPM_BUILD_ROOT
 %{_includedir}/GLES3/gl32.h
 %{_includedir}/GLES3/gl3ext.h
 %{_libdir}/pkgconfig/glesv2.pc
-%{_libdir}/libGLESv2.so
 
 %files libOSMesa
 %defattr(-,root,root,-)
@@ -670,6 +659,32 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Tue Jul 24 2018 Dave Airlie <airlied@redhat.com> - 18.0.5-3
+- rename fedora to system in glvnd fallback
+
+* Thu Jul 19 2018 Dave Airlie <airlied@redhat.com> - 18.0.5-2
+- Fix timeout overflow warnings (backport from upstream + virgl)
+
+* Wed Jun 20 2018 Adam Jackson <ajax@redhat.com> - 18.0.5-1
+- Mesa 18.0.5
+
+* Wed May 30 2018 Dave Airlie <airlied@redhat.com - 18.0.4-1.20180530
+- rebase to 18.0.4
+- backport shm put/get image for improved sw renderers (esp under qxl)
+
+* Tue May 29 2018 Adam Jackson <ajax@redhat.com> - 18.0.3-5.20180508
+- Fix gl.pc when using glvnd
+- Fix subpackage dependencies for glvnd
+
+* Fri May 25 2018 Adam Jackson <ajax@redhat.com> - 18.0.3-2.20180508
+- Use glvnd
+
+* Tue May 08 2018 Dave Airlie <airlied@redhat.com> 18.0.3-1.20180508
+- rebase to 18.0.3
+
+* Wed Apr 18 2018 Adam Jackson <ajax@redhat.com> - 17.2.3-9
+- Rebuild for new llvm
+
 * Mon Jan 15 2018 Dave Airlie <airlied@redhat.com> - 17.2.3-8.20171019
 - Add missing Intel CFL ids.
 

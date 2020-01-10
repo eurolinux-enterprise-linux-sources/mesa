@@ -1,0 +1,39 @@
+diff -up mesa-20180530/src/gallium/drivers/r600/Makefile.am.dma mesa-20180530/src/gallium/drivers/r600/Makefile.am
+--- mesa-20180530/src/gallium/drivers/r600/Makefile.am.dma	2018-07-19 10:24:26.110829986 +1000
++++ mesa-20180530/src/gallium/drivers/r600/Makefile.am	2018-07-19 10:24:44.569297131 +1000
+@@ -10,7 +10,8 @@ AM_CFLAGS = \
+ 	$(GALLIUM_DRIVER_CFLAGS) \
+ 	$(RADEON_CFLAGS) \
+ 	$(LIBELF_CFLAGS) \
+-	-I$(top_srcdir)/src/amd/common
++	-I$(top_srcdir)/src/amd/common \
++	-Wstrict-overflow=0
+ 
+ AM_CXXFLAGS = \
+ 	$(GALLIUM_DRIVER_CXXFLAGS) \
+diff -up mesa-20180530/src/gallium/winsys/virgl/drm/Makefile.am.dma mesa-20180530/src/gallium/winsys/virgl/drm/Makefile.am
+--- mesa-20180530/src/gallium/winsys/virgl/drm/Makefile.am.dma	2018-07-19 10:25:13.089018307 +1000
++++ mesa-20180530/src/gallium/winsys/virgl/drm/Makefile.am	2018-07-19 10:25:34.775566694 +1000
+@@ -26,7 +26,8 @@ include $(top_srcdir)/src/gallium/Automa
+ AM_CFLAGS = \
+ 	-I$(top_srcdir)/src/gallium/drivers \
+ 	$(GALLIUM_WINSYS_CFLAGS) \
+-	$(LIBDRM_CFLAGS)
++	$(LIBDRM_CFLAGS) \
++	-Wstrict-overflow=0
+ 
+ noinst_LTLIBRARIES = libvirgldrm.la
+ 
+diff -up mesa-20180530/src/gallium/winsys/virgl/vtest/Makefile.am.dma mesa-20180530/src/gallium/winsys/virgl/vtest/Makefile.am
+--- mesa-20180530/src/gallium/winsys/virgl/vtest/Makefile.am.dma	2018-07-19 10:25:48.521914297 +1000
++++ mesa-20180530/src/gallium/winsys/virgl/vtest/Makefile.am	2018-07-19 10:26:05.622346714 +1000
+@@ -25,7 +25,8 @@ include $(top_srcdir)/src/gallium/Automa
+ 
+ AM_CFLAGS = \
+ 	-I$(top_srcdir)/src/gallium/drivers \
+-	$(GALLIUM_WINSYS_CFLAGS)
++	$(GALLIUM_WINSYS_CFLAGS) \
++	-Wstrict-overflow=0
+ 
+ noinst_LTLIBRARIES = libvirglvtest.la
+ 

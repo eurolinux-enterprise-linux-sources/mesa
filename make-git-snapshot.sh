@@ -15,11 +15,11 @@ DIRNAME=mesa-$( date +%Y%m%d )
 
 echo REF ${REF:+--reference $REF}
 echo DIRNAME $DIRNAME
-echo HEAD ${1:-17.2}
+echo HEAD ${1:-18.0}
 
 rm -rf $DIRNAME
 
-git clone --depth 1 ${REF:+--reference $REF} --branch 17.2 \
+git clone --depth 1 ${REF:+--reference $REF} --branch 18.0 \
 	git://git.freedesktop.org/git/mesa/mesa $DIRNAME
 
 GIT_DIR=$DIRNAME/.git git archive --format=tar --prefix=$DIRNAME/ ${1:-HEAD} \

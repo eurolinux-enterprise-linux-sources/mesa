@@ -1,0 +1,29 @@
+From 7c137cfbffb4962b4e080052ef05cfb2266e758a Mon Sep 17 00:00:00 2001
+From: Adam Jackson <ajax@redhat.com>
+Date: Tue, 29 May 2018 09:47:35 -0400
+Subject: [PATCH] pkgconfig: Fix gl.pc when glvnd is enabled
+
+GL_LIB expands to GLX_mesa, but applications should not link against
+that. -lGL is never wrong, just hardcode it.
+
+Signed-off-by: Adam Jackson <ajax@redhat.com>
+---
+ src/mesa/gl.pc.in | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/mesa/gl.pc.in b/src/mesa/gl.pc.in
+index 181724b97b..8c7b7da8d7 100644
+--- a/src/mesa/gl.pc.in
++++ b/src/mesa/gl.pc.in
+@@ -7,7 +7,7 @@ Name: gl
+ Description: Mesa OpenGL library
+ Requires.private: @GL_PC_REQ_PRIV@
+ Version: @PACKAGE_VERSION@
+-Libs: -L${libdir} -l@GL_LIB@
++Libs: -L${libdir} -lGL
+ Libs.private: @GL_PC_LIB_PRIV@
+ Cflags: -I${includedir} @GL_PC_CFLAGS@
+ glx_tls: @GLX_TLS@
+-- 
+2.17.0
+

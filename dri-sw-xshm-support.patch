@@ -1,0 +1,1690 @@
+diff --git a/include/GL/internal/dri_interface.h b/include/GL/internal/dri_interface.h
+index 34a5c9fb01a..6e6d62a5142 100644
+--- a/include/GL/internal/dri_interface.h
++++ b/include/GL/internal/dri_interface.h
+@@ -565,7 +565,7 @@ struct __DRIdamageExtensionRec {
+  * SWRast Loader extension.
+  */
+ #define __DRI_SWRAST_LOADER "DRI_SWRastLoader"
+-#define __DRI_SWRAST_LOADER_VERSION 3
++#define __DRI_SWRAST_LOADER_VERSION 4
+ struct __DRIswrastLoaderExtensionRec {
+     __DRIextension base;
+ 
+@@ -607,6 +607,24 @@ struct __DRIswrastLoaderExtensionRec {
+    void (*getImage2)(__DRIdrawable *readable,
+ 		     int x, int y, int width, int height, int stride,
+ 		     char *data, void *loaderPrivate);
++
++    /**
++     * Put shm image to drawable
++     *
++     * \since 4
++     */
++    void (*putImageShm)(__DRIdrawable *drawable, int op,
++                        int x, int y, int width, int height, int stride,
++                        int shmid, char *shmaddr, unsigned offset,
++                        void *loaderPrivate);
++    /**
++     * Get shm image from readable
++     *
++     * \since 4
++     */
++    void (*getImageShm)(__DRIdrawable *readable,
++                        int x, int y, int width, int height,
++                        int shmid, void *loaderPrivate);
+ };
+ 
+ /**
+diff --git a/src/gallium/auxiliary/renderonly/renderonly.c b/src/gallium/auxiliary/renderonly/renderonly.c
+index d31f458845c..f83910a9404 100644
+--- a/src/gallium/auxiliary/renderonly/renderonly.c
++++ b/src/gallium/auxiliary/renderonly/renderonly.c
+@@ -98,7 +98,7 @@ renderonly_create_kms_dumb_buffer_for_resource(struct pipe_resource *rsc,
+ 
+    /* fill in winsys handle */
+    memset(out_handle, 0, sizeof(*out_handle));
+-   out_handle->type = DRM_API_HANDLE_TYPE_FD;
++   out_handle->type = WINSYS_HANDLE_TYPE_FD;
+    out_handle->stride = create_dumb.pitch;
+ 
+    err = drmPrimeHandleToFD(ro->kms_fd, create_dumb.handle, O_CLOEXEC,
+@@ -130,7 +130,7 @@ renderonly_create_gpu_import_for_resource(struct pipe_resource *rsc,
+    boolean status;
+    int fd, err;
+    struct winsys_handle handle = {
+-      .type = DRM_API_HANDLE_TYPE_FD
++      .type = WINSYS_HANDLE_TYPE_FD
+    };
+ 
+    scanout = CALLOC_STRUCT(renderonly_scanout);
+diff --git a/src/gallium/auxiliary/renderonly/renderonly.h b/src/gallium/auxiliary/renderonly/renderonly.h
+index 6a89c29e2ef..a8d6a686ed4 100644
+--- a/src/gallium/auxiliary/renderonly/renderonly.h
++++ b/src/gallium/auxiliary/renderonly/renderonly.h
+@@ -85,7 +85,7 @@ renderonly_get_handle(struct renderonly_scanout *scanout,
+    if (!scanout)
+       return FALSE;
+ 
+-   assert(handle->type == DRM_API_HANDLE_TYPE_KMS);
++   assert(handle->type == WINSYS_HANDLE_TYPE_KMS);
+    handle->handle = scanout->handle;
+    handle->stride = scanout->stride;
+ 
+diff --git a/src/gallium/auxiliary/vl/vl_winsys_dri.c b/src/gallium/auxiliary/vl/vl_winsys_dri.c
+index 79ebf750cdb..bb1ff504886 100644
+--- a/src/gallium/auxiliary/vl/vl_winsys_dri.c
++++ b/src/gallium/auxiliary/vl/vl_winsys_dri.c
+@@ -231,7 +231,7 @@ vl_dri2_screen_texture_from_drawable(struct vl_screen *vscreen, void *drawable)
+    }
+ 
+    memset(&dri2_handle, 0, sizeof(dri2_handle));
+-   dri2_handle.type = DRM_API_HANDLE_TYPE_SHARED;
++   dri2_handle.type = WINSYS_HANDLE_TYPE_SHARED;
+    dri2_handle.handle = back_left->name;
+    dri2_handle.stride = back_left->pitch;
+ 
+diff --git a/src/gallium/auxiliary/vl/vl_winsys_dri3.c b/src/gallium/auxiliary/vl/vl_winsys_dri3.c
+index 8251087f3f9..8e3c4a0e04d 100644
+--- a/src/gallium/auxiliary/vl/vl_winsys_dri3.c
++++ b/src/gallium/auxiliary/vl/vl_winsys_dri3.c
+@@ -271,7 +271,7 @@ dri3_alloc_back_buffer(struct vl_dri3_screen *scrn)
+       pixmap_buffer_texture = buffer->texture;
+    }
+    memset(&whandle, 0, sizeof(whandle));
+-   whandle.type= DRM_API_HANDLE_TYPE_FD;
++   whandle.type= WINSYS_HANDLE_TYPE_FD;
+    usage = PIPE_HANDLE_USAGE_EXPLICIT_FLUSH | PIPE_HANDLE_USAGE_READ;
+    scrn->base.pscreen->resource_get_handle(scrn->base.pscreen, NULL,
+                                            pixmap_buffer_texture, &whandle,
+@@ -492,7 +492,7 @@ dri3_get_front_buffer(struct vl_dri3_screen *scrn)
+       goto free_reply;
+ 
+    memset(&whandle, 0, sizeof(whandle));
+-   whandle.type = DRM_API_HANDLE_TYPE_FD;
++   whandle.type = WINSYS_HANDLE_TYPE_FD;
+    whandle.handle = (unsigned)fds[0];
+    whandle.stride = bp_reply->stride;
+    memset(&templ, 0, sizeof(templ));
+diff --git a/src/gallium/drivers/etnaviv/etnaviv_resource.c b/src/gallium/drivers/etnaviv/etnaviv_resource.c
+index d70152e082d..cf870a3ed76 100644
+--- a/src/gallium/drivers/etnaviv/etnaviv_resource.c
++++ b/src/gallium/drivers/etnaviv/etnaviv_resource.c
+@@ -250,7 +250,7 @@ etna_resource_alloc(struct pipe_screen *pscreen, unsigned layout,
+       if (!scanout)
+          return NULL;
+ 
+-      assert(handle.type == DRM_API_HANDLE_TYPE_FD);
++      assert(handle.type == WINSYS_HANDLE_TYPE_FD);
+       handle.modifier = modifier;
+       rsc = etna_resource(pscreen->resource_from_handle(pscreen, templat,
+                                                         &handle,
+@@ -596,16 +596,16 @@ etna_resource_get_handle(struct pipe_screen *pscreen,
+    handle->stride = rsc->levels[0].stride;
+    handle->modifier = layout_to_modifier(rsc->layout);
+ 
+-   if (handle->type == DRM_API_HANDLE_TYPE_SHARED) {
++   if (handle->type == WINSYS_HANDLE_TYPE_SHARED) {
+       return etna_bo_get_name(rsc->bo, &handle->handle) == 0;
+-   } else if (handle->type == DRM_API_HANDLE_TYPE_KMS) {
++   } else if (handle->type == WINSYS_HANDLE_TYPE_KMS) {
+       if (renderonly_get_handle(scanout, handle)) {
+          return TRUE;
+       } else {
+          handle->handle = etna_bo_handle(rsc->bo);
+          return TRUE;
+       }
+-   } else if (handle->type == DRM_API_HANDLE_TYPE_FD) {
++   } else if (handle->type == WINSYS_HANDLE_TYPE_FD) {
+       handle->handle = etna_bo_dmabuf(rsc->bo);
+       return TRUE;
+    } else {
+diff --git a/src/gallium/drivers/etnaviv/etnaviv_screen.c b/src/gallium/drivers/etnaviv/etnaviv_screen.c
+index c72793920ab..1997e9f85db 100644
+--- a/src/gallium/drivers/etnaviv/etnaviv_screen.c
++++ b/src/gallium/drivers/etnaviv/etnaviv_screen.c
+@@ -842,9 +842,9 @@ etna_screen_bo_from_handle(struct pipe_screen *pscreen,
+    struct etna_screen *screen = etna_screen(pscreen);
+    struct etna_bo *bo;
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+       bo = etna_bo_from_name(screen->dev, whandle->handle);
+-   } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++   } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+       bo = etna_bo_from_dmabuf(screen->dev, whandle->handle);
+    } else {
+       DBG("Attempt to import unsupported handle type %d", whandle->type);
+diff --git a/src/gallium/drivers/freedreno/freedreno_screen.c b/src/gallium/drivers/freedreno/freedreno_screen.c
+index b68685989ca..e0f769a63cd 100644
+--- a/src/gallium/drivers/freedreno/freedreno_screen.c
++++ b/src/gallium/drivers/freedreno/freedreno_screen.c
+@@ -731,12 +731,12 @@ fd_screen_bo_get_handle(struct pipe_screen *pscreen,
+ {
+ 	whandle->stride = stride;
+ 
+-	if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++	if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+ 		return fd_bo_get_name(bo, &whandle->handle) == 0;
+-	} else if (whandle->type == DRM_API_HANDLE_TYPE_KMS) {
++	} else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
+ 		whandle->handle = fd_bo_handle(bo);
+ 		return TRUE;
+-	} else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++	} else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+ 		whandle->handle = fd_bo_dmabuf(bo);
+ 		return TRUE;
+ 	} else {
+@@ -751,11 +751,11 @@ fd_screen_bo_from_handle(struct pipe_screen *pscreen,
+ 	struct fd_screen *screen = fd_screen(pscreen);
+ 	struct fd_bo *bo;
+ 
+-	if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++	if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+ 		bo = fd_bo_from_name(screen->dev, whandle->handle);
+-	} else if (whandle->type == DRM_API_HANDLE_TYPE_KMS) {
++	} else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
+ 		bo = fd_bo_from_handle(screen->dev, whandle->handle, 0);
+-	} else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++	} else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+ 		bo = fd_bo_from_dmabuf(screen->dev, whandle->handle);
+ 	} else {
+ 		DBG("Attempt to import unsupported handle type %d", whandle->type);
+diff --git a/src/gallium/drivers/nouveau/nouveau_screen.c b/src/gallium/drivers/nouveau/nouveau_screen.c
+index c144b39b2dd..c97b707955c 100644
+--- a/src/gallium/drivers/nouveau/nouveau_screen.c
++++ b/src/gallium/drivers/nouveau/nouveau_screen.c
+@@ -102,14 +102,14 @@ nouveau_screen_bo_from_handle(struct pipe_screen *pscreen,
+       return NULL;
+    }
+ 
+-   if (whandle->type != DRM_API_HANDLE_TYPE_SHARED &&
+-       whandle->type != DRM_API_HANDLE_TYPE_FD) {
++   if (whandle->type != WINSYS_HANDLE_TYPE_SHARED &&
++       whandle->type != WINSYS_HANDLE_TYPE_FD) {
+       debug_printf("%s: attempt to import unsupported handle type %d\n",
+                    __FUNCTION__, whandle->type);
+       return NULL;
+    }
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED)
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED)
+       ret = nouveau_bo_name_ref(dev, whandle->handle, &bo);
+    else
+       ret = nouveau_bo_prime_handle_ref(dev, whandle->handle, &bo);
+@@ -133,12 +133,12 @@ nouveau_screen_bo_get_handle(struct pipe_screen *pscreen,
+ {
+    whandle->stride = stride;
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+       return nouveau_bo_name_get(bo, &whandle->handle) == 0;
+-   } else if (whandle->type == DRM_API_HANDLE_TYPE_KMS) {
++   } else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
+       whandle->handle = bo->handle;
+       return true;
+-   } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++   } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+       return nouveau_bo_set_prime(bo, (int *)&whandle->handle) == 0;
+    } else {
+       return false;
+diff --git a/src/gallium/drivers/radeon/r600_texture.c b/src/gallium/drivers/radeon/r600_texture.c
+index 36eff40949f..a9c7b46b7b3 100644
+--- a/src/gallium/drivers/radeon/r600_texture.c
++++ b/src/gallium/drivers/radeon/r600_texture.c
+@@ -699,7 +699,7 @@ static boolean r600_texture_get_handle(struct pipe_screen* screen,
+ 		if (sscreen->ws->buffer_is_suballocated(res->buf) ||
+ 		    rtex->surface.tile_swizzle ||
+ 		    (rtex->resource.flags & RADEON_FLAG_NO_INTERPROCESS_SHARING &&
+-		     whandle->type != DRM_API_HANDLE_TYPE_KMS)) {
++		     whandle->type != WINSYS_HANDLE_TYPE_KMS)) {
+ 			assert(!res->b.is_shared);
+ 			r600_reallocate_texture_inplace(rctx, rtex,
+ 							PIPE_BIND_SHARED, false);
+diff --git a/src/gallium/drivers/vc4/vc4_resource.c b/src/gallium/drivers/vc4/vc4_resource.c
+index cdcbcc917e0..58b6a42d4fd 100644
+--- a/src/gallium/drivers/vc4/vc4_resource.c
++++ b/src/gallium/drivers/vc4/vc4_resource.c
+@@ -406,7 +406,7 @@ vc4_resource_get_handle(struct pipe_screen *pscreen,
+                 whandle->modifier = DRM_FORMAT_MOD_LINEAR;
+ 
+         switch (whandle->type) {
+-        case DRM_API_HANDLE_TYPE_SHARED:
++        case WINSYS_HANDLE_TYPE_SHARED:
+                 if (screen->ro) {
+                         /* This could probably be supported, assuming that a
+                          * control node was used for pl111.
+@@ -416,12 +416,12 @@ vc4_resource_get_handle(struct pipe_screen *pscreen,
+                 }
+ 
+                 return vc4_bo_flink(rsc->bo, &whandle->handle);
+-        case DRM_API_HANDLE_TYPE_KMS:
++        case WINSYS_HANDLE_TYPE_KMS:
+                 if (screen->ro && renderonly_get_handle(rsc->scanout, whandle))
+                         return TRUE;
+                 whandle->handle = rsc->bo->handle;
+                 return TRUE;
+-        case DRM_API_HANDLE_TYPE_FD:
++        case WINSYS_HANDLE_TYPE_FD:
+                 /* FDs are cross-device, so we can export directly from vc4.
+                  */
+                 whandle->handle = vc4_bo_get_dmabuf(rsc->bo);
+@@ -716,11 +716,11 @@ vc4_resource_from_handle(struct pipe_screen *pscreen,
+         }
+ 
+         switch (whandle->type) {
+-        case DRM_API_HANDLE_TYPE_SHARED:
++        case WINSYS_HANDLE_TYPE_SHARED:
+                 rsc->bo = vc4_bo_open_name(screen,
+                                            whandle->handle, whandle->stride);
+                 break;
+-        case DRM_API_HANDLE_TYPE_FD:
++        case WINSYS_HANDLE_TYPE_FD:
+                 rsc->bo = vc4_bo_open_dmabuf(screen,
+                                              whandle->handle, whandle->stride);
+                 break;
+diff --git a/src/gallium/drivers/vc5/vc5_resource.c b/src/gallium/drivers/vc5/vc5_resource.c
+index a9cc27127f0..9754d3d6024 100644
+--- a/src/gallium/drivers/vc5/vc5_resource.c
++++ b/src/gallium/drivers/vc5/vc5_resource.c
+@@ -314,12 +314,12 @@ vc5_resource_get_handle(struct pipe_screen *pscreen,
+         bo->private = false;
+ 
+         switch (whandle->type) {
+-        case DRM_API_HANDLE_TYPE_SHARED:
++        case WINSYS_HANDLE_TYPE_SHARED:
+                 return vc5_bo_flink(bo, &whandle->handle);
+-        case DRM_API_HANDLE_TYPE_KMS:
++        case WINSYS_HANDLE_TYPE_KMS:
+                 whandle->handle = bo->handle;
+                 return TRUE;
+-        case DRM_API_HANDLE_TYPE_FD:
++        case WINSYS_HANDLE_TYPE_FD:
+                 whandle->handle = vc5_bo_get_dmabuf(bo);
+                 return whandle->handle != -1;
+         }
+@@ -592,11 +592,11 @@ vc5_resource_from_handle(struct pipe_screen *pscreen,
+         }
+ 
+         switch (whandle->type) {
+-        case DRM_API_HANDLE_TYPE_SHARED:
++        case WINSYS_HANDLE_TYPE_SHARED:
+                 rsc->bo = vc5_bo_open_name(screen,
+                                            whandle->handle, whandle->stride);
+                 break;
+-        case DRM_API_HANDLE_TYPE_FD:
++        case WINSYS_HANDLE_TYPE_FD:
+                 rsc->bo = vc5_bo_open_dmabuf(screen,
+                                              whandle->handle, whandle->stride);
+                 break;
+diff --git a/src/gallium/include/pipe/p_screen.h b/src/gallium/include/pipe/p_screen.h
+index 101e229088b..8fd81a4e9a9 100644
+--- a/src/gallium/include/pipe/p_screen.h
++++ b/src/gallium/include/pipe/p_screen.h
+@@ -191,7 +191,7 @@ struct pipe_screen {
+     * another process by first creating a pipe texture and then calling
+     * resource_get_handle.
+     *
+-    * NOTE: in the case of DRM_API_HANDLE_TYPE_FD handles, the caller
++    * NOTE: in the case of WINSYS_HANDLE_TYPE_FD handles, the caller
+     * retains ownership of the FD.  (This is consistent with
+     * EGL_EXT_image_dma_buf_import)
+     *
+@@ -238,7 +238,7 @@ struct pipe_screen {
+     * the resource into a format compatible for sharing. The use case is
+     * OpenGL-OpenCL interop. The context parameter is allowed to be NULL.
+     *
+-    * NOTE: in the case of DRM_API_HANDLE_TYPE_FD handles, the caller
++    * NOTE: in the case of WINSYS_HANDLE_TYPE_FD handles, the caller
+     * takes ownership of the FD.  (This is consistent with
+     * EGL_MESA_image_dma_buf_export)
+     *
+@@ -389,7 +389,7 @@ struct pipe_screen {
+     * Then the underlying memory object is then exported through interfaces
+     * compatible with EXT_external_resources.
+     *
+-    * Note: For DRM_API_HANDLE_TYPE_FD handles, the caller retains ownership
++    * Note: For WINSYS_HANDLE_TYPE_FD handles, the caller retains ownership
+     * of the fd.
+     *
+     * \param handle  A handle representing the memory object to import
+diff --git a/src/gallium/include/state_tracker/drisw_api.h b/src/gallium/include/state_tracker/drisw_api.h
+index 03d5ee405a4..e365ab81f18 100644
+--- a/src/gallium/include/state_tracker/drisw_api.h
++++ b/src/gallium/include/state_tracker/drisw_api.h
+@@ -2,6 +2,7 @@
+ #define _DRISW_API_H_
+ 
+ #include "pipe/p_compiler.h"
++#include "sw_winsys.h"
+ 
+ struct pipe_screen;
+ struct dri_drawable;
+@@ -18,6 +19,9 @@ struct drisw_loader_funcs
+                       void *data, unsigned width, unsigned height);
+    void (*put_image2) (struct dri_drawable *dri_drawable,
+                        void *data, int x, int y, unsigned width, unsigned height, unsigned stride);
++   void (*put_image_shm) (struct dri_drawable *dri_drawable,
++                          int shmid, char *shmaddr, unsigned offset,
++                          int x, int y, unsigned width, unsigned height, unsigned stride);
+ };
+ 
+ #endif
+diff --git a/src/gallium/include/state_tracker/drm_driver.h b/src/gallium/include/state_tracker/drm_driver.h
+index f188b5a7d4c..19cd19f26e1 100644
+--- a/src/gallium/include/state_tracker/drm_driver.h
++++ b/src/gallium/include/state_tracker/drm_driver.h
+@@ -4,58 +4,13 @@
+ 
+ #include "pipe/p_compiler.h"
+ 
++#include "winsys_handle.h"
++
+ struct pipe_screen;
+ struct pipe_screen_config;
+ struct pipe_context;
+ struct pipe_resource;
+ 
+-#define DRM_API_HANDLE_TYPE_SHARED 0
+-#define DRM_API_HANDLE_TYPE_KMS    1
+-#define DRM_API_HANDLE_TYPE_FD     2
+-
+-
+-/**
+- * For use with pipe_screen::{texture_from_handle|texture_get_handle}.
+- */
+-struct winsys_handle
+-{
+-   /**
+-    * Input for texture_from_handle, valid values are
+-    * DRM_API_HANDLE_TYPE_SHARED or DRM_API_HANDLE_TYPE_FD.
+-    * Input to texture_get_handle,
+-    * to select handle for kms, flink, or prime.
+-    */
+-   unsigned type;
+-   /**
+-    * Input for texture_get_handle, allows to export the offset
+-    * of a specific layer of an array texture.
+-    */
+-   unsigned layer;
+-   /**
+-    * Input to texture_from_handle.
+-    * Output for texture_get_handle.
+-    */
+-   unsigned handle;
+-   /**
+-    * Input to texture_from_handle.
+-    * Output for texture_get_handle.
+-    */
+-   unsigned stride;
+-   /**
+-    * Input to texture_from_handle.
+-    * Output for texture_get_handle.
+-    */
+-   unsigned offset;
+-
+-   /**
+-    * Input to resource_from_handle.
+-    * Output from resource_get_handle.
+-    */
+-   uint64_t modifier;
+-};
+-
+-
+-
+ /**
+  * Configuration queries.
+  */
+diff --git a/src/gallium/include/state_tracker/sw_winsys.h b/src/gallium/include/state_tracker/sw_winsys.h
+index 0b792cd0ce4..cd5838ad1d8 100644
+--- a/src/gallium/include/state_tracker/sw_winsys.h
++++ b/src/gallium/include/state_tracker/sw_winsys.h
+@@ -37,14 +37,13 @@
+ 
+ #include "pipe/p_compiler.h" /* for boolean */
+ #include "pipe/p_format.h"
+-
++#include "state_tracker/winsys_handle.h"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+ 
+ 
+-struct winsys_handle;
+ struct pipe_screen;
+ struct pipe_context;
+ struct pipe_resource;
+diff --git a/src/gallium/include/state_tracker/winsys_handle.h b/src/gallium/include/state_tracker/winsys_handle.h
+new file mode 100644
+index 00000000000..167c1a937fd
+--- /dev/null
++++ b/src/gallium/include/state_tracker/winsys_handle.h
+@@ -0,0 +1,58 @@
++
++#ifndef _WINSYS_HANDLE_H_
++#define _WINSYS_HANDLE_H_
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define WINSYS_HANDLE_TYPE_SHARED 0
++#define WINSYS_HANDLE_TYPE_KMS    1
++#define WINSYS_HANDLE_TYPE_FD     2
++#define WINSYS_HANDLE_TYPE_SHMID   3
++
++/**
++ * For use with pipe_screen::{texture_from_handle|texture_get_handle}.
++ */
++struct winsys_handle
++{
++   /**
++    * Input for texture_from_handle, valid values are
++    * WINSYS_HANDLE_TYPE_SHARED or WINSYS_HANDLE_TYPE_FD.
++    * Input to texture_get_handle,
++    * to select handle for kms, flink, or prime.
++    */
++   unsigned type;
++   /**
++    * Input for texture_get_handle, allows to export the offset
++    * of a specific layer of an array texture.
++    */
++   unsigned layer;
++   /**
++    * Input to texture_from_handle.
++    * Output for texture_get_handle.
++    */
++   unsigned handle;
++   /**
++    * Input to texture_from_handle.
++    * Output for texture_get_handle.
++    */
++   unsigned stride;
++   /**
++    * Input to texture_from_handle.
++    * Output for texture_get_handle.
++    */
++   unsigned offset;
++
++   /**
++    * Input to resource_from_handle.
++    * Output from resource_get_handle.
++    */
++   uint64_t modifier;
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _WINSYS_HANDLE_H_ */
+diff --git a/src/gallium/state_trackers/dri/dri2.c b/src/gallium/state_trackers/dri/dri2.c
+index 2c3a6e0d194..aa219377069 100644
+--- a/src/gallium/state_trackers/dri/dri2.c
++++ b/src/gallium/state_trackers/dri/dri2.c
+@@ -584,9 +584,9 @@ dri2_allocate_buffer(__DRIscreen *sPriv,
+ 
+    memset(&whandle, 0, sizeof(whandle));
+    if (screen->can_share_buffer)
+-      whandle.type = DRM_API_HANDLE_TYPE_SHARED;
++      whandle.type = WINSYS_HANDLE_TYPE_SHARED;
+    else
+-      whandle.type = DRM_API_HANDLE_TYPE_KMS;
++      whandle.type = WINSYS_HANDLE_TYPE_KMS;
+ 
+    screen->base.screen->resource_get_handle(screen->base.screen, NULL,
+          buffer->resource, &whandle,
+@@ -772,9 +772,9 @@ dri2_allocate_textures(struct dri_context *ctx,
+          whandle.offset = 0;
+          whandle.modifier = DRM_FORMAT_MOD_INVALID;
+          if (screen->can_share_buffer)
+-            whandle.type = DRM_API_HANDLE_TYPE_SHARED;
++            whandle.type = WINSYS_HANDLE_TYPE_SHARED;
+          else
+-            whandle.type = DRM_API_HANDLE_TYPE_KMS;
++            whandle.type = WINSYS_HANDLE_TYPE_KMS;
+          drawable->textures[statt] =
+             screen->base.screen->resource_from_handle(screen->base.screen,
+                   &templ, &whandle,
+@@ -1032,7 +1032,7 @@ dri2_create_image_from_name(__DRIscreen *_screen,
+    enum pipe_format pf;
+ 
+    memset(&whandle, 0, sizeof(whandle));
+-   whandle.type = DRM_API_HANDLE_TYPE_SHARED;
++   whandle.type = WINSYS_HANDLE_TYPE_SHARED;
+    whandle.handle = name;
+    whandle.modifier = DRM_FORMAT_MOD_INVALID;
+ 
+@@ -1091,7 +1091,7 @@ dri2_create_image_from_fd(__DRIscreen *_screen,
+          goto exit;
+       }
+ 
+-      whandles[i].type = DRM_API_HANDLE_TYPE_FD;
++      whandles[i].type = WINSYS_HANDLE_TYPE_FD;
+       whandles[i].handle = (unsigned)fds[i];
+       whandles[i].stride = (unsigned)strides[i];
+       whandles[i].offset = (unsigned)offsets[i];
+@@ -1231,35 +1231,35 @@ dri2_query_image(__DRIimage *image, int attrib, int *value)
+ 
+    switch (attrib) {
+    case __DRI_IMAGE_ATTRIB_STRIDE:
+-      whandle.type = DRM_API_HANDLE_TYPE_KMS;
++      whandle.type = WINSYS_HANDLE_TYPE_KMS;
+       if (!image->texture->screen->resource_get_handle(image->texture->screen,
+             NULL, image->texture, &whandle, usage))
+          return GL_FALSE;
+       *value = whandle.stride;
+       return GL_TRUE;
+    case __DRI_IMAGE_ATTRIB_OFFSET:
+-      whandle.type = DRM_API_HANDLE_TYPE_KMS;
++      whandle.type = WINSYS_HANDLE_TYPE_KMS;
+       if (!image->texture->screen->resource_get_handle(image->texture->screen,
+             NULL, image->texture, &whandle, usage))
+          return GL_FALSE;
+       *value = whandle.offset;
+       return GL_TRUE;
+    case __DRI_IMAGE_ATTRIB_HANDLE:
+-      whandle.type = DRM_API_HANDLE_TYPE_KMS;
++      whandle.type = WINSYS_HANDLE_TYPE_KMS;
+       if (!image->texture->screen->resource_get_handle(image->texture->screen,
+          NULL, image->texture, &whandle, usage))
+          return GL_FALSE;
+       *value = whandle.handle;
+       return GL_TRUE;
+    case __DRI_IMAGE_ATTRIB_NAME:
+-      whandle.type = DRM_API_HANDLE_TYPE_SHARED;
++      whandle.type = WINSYS_HANDLE_TYPE_SHARED;
+       if (!image->texture->screen->resource_get_handle(image->texture->screen,
+          NULL, image->texture, &whandle, usage))
+          return GL_FALSE;
+       *value = whandle.handle;
+       return GL_TRUE;
+    case __DRI_IMAGE_ATTRIB_FD:
+-      whandle.type= DRM_API_HANDLE_TYPE_FD;
++      whandle.type= WINSYS_HANDLE_TYPE_FD;
+       if (!image->texture->screen->resource_get_handle(image->texture->screen,
+             NULL, image->texture, &whandle, usage))
+          return GL_FALSE;
+@@ -1287,7 +1287,7 @@ dri2_query_image(__DRIimage *image, int attrib, int *value)
+       *value = 1;
+       return GL_TRUE;
+    case __DRI_IMAGE_ATTRIB_MODIFIER_UPPER:
+-      whandle.type = DRM_API_HANDLE_TYPE_KMS;
++      whandle.type = WINSYS_HANDLE_TYPE_KMS;
+       whandle.modifier = DRM_FORMAT_MOD_INVALID;
+       if (!image->texture->screen->resource_get_handle(image->texture->screen,
+             NULL, image->texture, &whandle, usage))
+@@ -1297,7 +1297,7 @@ dri2_query_image(__DRIimage *image, int attrib, int *value)
+       *value = (whandle.modifier >> 32) & 0xffffffff;
+       return GL_TRUE;
+    case __DRI_IMAGE_ATTRIB_MODIFIER_LOWER:
+-      whandle.type = DRM_API_HANDLE_TYPE_KMS;
++      whandle.type = WINSYS_HANDLE_TYPE_KMS;
+       whandle.modifier = DRM_FORMAT_MOD_INVALID;
+       if (!image->texture->screen->resource_get_handle(image->texture->screen,
+             NULL, image->texture, &whandle, usage))
+@@ -1377,7 +1377,7 @@ dri2_from_names(__DRIscreen *screen, int width, int height, int format,
+       return NULL;
+ 
+    memset(&whandle, 0, sizeof(whandle));
+-   whandle.type = DRM_API_HANDLE_TYPE_SHARED;
++   whandle.type = WINSYS_HANDLE_TYPE_SHARED;
+    whandle.handle = names[0];
+    whandle.stride = strides[0];
+    whandle.offset = offsets[0];
+@@ -1909,7 +1909,7 @@ dri2_interop_export_object(__DRIcontext *_ctx,
+    }
+ 
+    memset(&whandle, 0, sizeof(whandle));
+-   whandle.type = DRM_API_HANDLE_TYPE_FD;
++   whandle.type = WINSYS_HANDLE_TYPE_FD;
+ 
+    success = screen->resource_get_handle(screen, st->pipe, res, &whandle,
+                                          usage);
+diff --git a/src/gallium/state_trackers/dri/drisw.c b/src/gallium/state_trackers/dri/drisw.c
+index eb5752386dc..e24fcba3869 100644
+--- a/src/gallium/state_trackers/dri/drisw.c
++++ b/src/gallium/state_trackers/dri/drisw.c
+@@ -26,14 +26,6 @@
+  *
+  **************************************************************************/
+ 
+-/* TODO:
+- *
+- * xshm / EGLImage:
+- *
+- * Allow the loaders to use the XSHM extension. It probably requires callbacks
+- * for createImage/destroyImage similar to DRI2 getBuffers.
+- */
+-
+ #include "util/u_format.h"
+ #include "util/u_memory.h"
+ #include "util/u_inlines.h"
+@@ -86,6 +78,19 @@ put_image2(__DRIdrawable *dPriv, void *data, int x, int y,
+                      data, dPriv->loaderPrivate);
+ }
+ 
++static inline void
++put_image_shm(__DRIdrawable *dPriv, int shmid, char *shmaddr,
++              unsigned offset, int x, int y,
++              unsigned width, unsigned height, unsigned stride)
++{
++   __DRIscreen *sPriv = dPriv->driScreenPriv;
++   const __DRIswrastLoaderExtension *loader = sPriv->swrast_loader;
++
++   loader->putImageShm(dPriv, __DRI_SWRAST_IMAGE_OP_SWAP,
++                       x, y, width, height, stride,
++                       shmid, shmaddr, offset, dPriv->loaderPrivate);
++}
++
+ static inline void
+ get_image(__DRIdrawable *dPriv, int x, int y, int width, int height, void *data)
+ {
+@@ -112,6 +117,26 @@ get_image2(__DRIdrawable *dPriv, int x, int y, int width, int height, int stride
+                      data, dPriv->loaderPrivate);
+ }
+ 
++static inline bool
++get_image_shm(__DRIdrawable *dPriv, int x, int y, int width, int height,
++              struct pipe_resource *res)
++{
++   __DRIscreen *sPriv = dPriv->driScreenPriv;
++   const __DRIswrastLoaderExtension *loader = sPriv->swrast_loader;
++   struct winsys_handle whandle;
++
++   whandle.type = WINSYS_HANDLE_TYPE_SHMID;
++
++   if (loader->base.version < 4 || !loader->getImageShm)
++      return FALSE;
++
++   if (!res->screen->resource_get_handle(res->screen, NULL, res, &whandle, PIPE_HANDLE_USAGE_WRITE))
++      return FALSE;
++
++   loader->getImageShm(dPriv, x, y, width, height, whandle.handle, dPriv->loaderPrivate);
++   return TRUE;
++}
++
+ static void
+ drisw_update_drawable_info(struct dri_drawable *drawable)
+ {
+@@ -152,6 +177,17 @@ drisw_put_image2(struct dri_drawable *drawable,
+    put_image2(dPriv, data, x, y, width, height, stride);
+ }
+ 
++static inline void
++drisw_put_image_shm(struct dri_drawable *drawable,
++                    int shmid, char *shmaddr, unsigned offset,
++                    int x, int y, unsigned width, unsigned height,
++                    unsigned stride)
++{
++   __DRIdrawable *dPriv = drawable->dPriv;
++
++   put_image_shm(dPriv, shmid, shmaddr, offset, x, y, width, height, stride);
++}
++
+ static inline void
+ drisw_present_texture(__DRIdrawable *dPriv,
+                       struct pipe_resource *ptex, struct pipe_box *sub_box)
+@@ -348,7 +384,8 @@ drisw_update_tex_buffer(struct dri_drawable *drawable,
+                            x, y, w, h, &transfer);
+ 
+    /* Copy the Drawable content to the mapped texture buffer */
+-   get_image(dPriv, x, y, w, h, map);
++   if (!get_image_shm(dPriv, x, y, w, h, res))
++      get_image(dPriv, x, y, w, h, map);
+ 
+    /* The pipe transfer has a pitch rounded up to the nearest 64 pixels.
+       get_image() has a pitch rounded up to 4 bytes.  */
+@@ -394,6 +431,7 @@ static struct drisw_loader_funcs drisw_lf = {
+ static const __DRIconfig **
+ drisw_init_screen(__DRIscreen * sPriv)
+ {
++   const __DRIswrastLoaderExtension *loader = sPriv->swrast_loader;
+    const __DRIconfig **configs;
+    struct dri_screen *screen;
+    struct pipe_screen *pscreen = NULL;
+@@ -409,6 +447,10 @@ drisw_init_screen(__DRIscreen * sPriv)
+ 
+    sPriv->driverPrivate = (void *)screen;
+    sPriv->extensions = drisw_screen_extensions;
++   if (loader->base.version >= 4) {
++      if (loader->putImageShm)
++         drisw_lf.put_image_shm = drisw_put_image_shm;
++   }
+ 
+    if (pipe_loader_sw_probe_dri(&screen->dev, &drisw_lf)) {
+       dri_init_options(screen);
+diff --git a/src/gallium/state_trackers/nine/swapchain9.c b/src/gallium/state_trackers/nine/swapchain9.c
+index f24a7d05437..7cf5c54bfa8 100644
+--- a/src/gallium/state_trackers/nine/swapchain9.c
++++ b/src/gallium/state_trackers/nine/swapchain9.c
+@@ -96,7 +96,7 @@ D3DWindowBuffer_create(struct NineSwapChain9 *This,
+     HRESULT hr;
+ 
+     memset(&whandle, 0, sizeof(whandle));
+-    whandle.type = DRM_API_HANDLE_TYPE_FD;
++    whandle.type = WINSYS_HANDLE_TYPE_FD;
+     This->screen->resource_get_handle(This->screen, pipe, resource,
+                                       &whandle,
+                                       for_frontbuffer_reading ?
+diff --git a/src/gallium/state_trackers/va/buffer.c b/src/gallium/state_trackers/va/buffer.c
+index deaeb1939fe..42ec9730fc1 100644
+--- a/src/gallium/state_trackers/va/buffer.c
++++ b/src/gallium/state_trackers/va/buffer.c
+@@ -305,7 +305,7 @@ vlVaAcquireBufferHandle(VADriverContextP ctx, VABufferID buf_id,
+          drv->pipe->flush(drv->pipe, NULL, 0);
+ 
+          memset(&whandle, 0, sizeof(whandle));
+-         whandle.type = DRM_API_HANDLE_TYPE_FD;
++         whandle.type = WINSYS_HANDLE_TYPE_FD;
+ 
+          if (!screen->resource_get_handle(screen, drv->pipe,
+                                           buf->derived_surface.resource,
+diff --git a/src/gallium/state_trackers/va/surface.c b/src/gallium/state_trackers/va/surface.c
+index f9412ce52e6..432480c458a 100644
+--- a/src/gallium/state_trackers/va/surface.c
++++ b/src/gallium/state_trackers/va/surface.c
+@@ -569,7 +569,7 @@ suface_from_external_memory(VADriverContextP ctx, vlVaSurface *surface,
+    res_templ.usage = PIPE_USAGE_DEFAULT;
+ 
+    memset(&whandle, 0, sizeof(struct winsys_handle));
+-   whandle.type = DRM_API_HANDLE_TYPE_FD;
++   whandle.type = WINSYS_HANDLE_TYPE_FD;
+    whandle.handle = memory_attibute->buffers[index];
+    whandle.stride = memory_attibute->pitches[index];
+ 
+@@ -1034,7 +1034,7 @@ vlVaExportSurfaceHandle(VADriverContextP ctx,
+       }
+ 
+       memset(&whandle, 0, sizeof(whandle));
+-      whandle.type = DRM_API_HANDLE_TYPE_FD;
++      whandle.type = WINSYS_HANDLE_TYPE_FD;
+ 
+       if (!screen->resource_get_handle(screen, drv->pipe, resource,
+                                        &whandle, usage)) {
+diff --git a/src/gallium/state_trackers/vdpau/output.c b/src/gallium/state_trackers/vdpau/output.c
+index 8ef826836c1..6ef7a404474 100644
+--- a/src/gallium/state_trackers/vdpau/output.c
++++ b/src/gallium/state_trackers/vdpau/output.c
+@@ -805,7 +805,7 @@ VdpStatus vlVdpOutputSurfaceDMABuf(VdpOutputSurface surface,
+    vlsurface->device->context->flush(vlsurface->device->context, NULL, 0);
+ 
+    memset(&whandle, 0, sizeof(struct winsys_handle));
+-   whandle.type = DRM_API_HANDLE_TYPE_FD;
++   whandle.type = WINSYS_HANDLE_TYPE_FD;
+ 
+    pscreen = vlsurface->surface->texture->screen;
+    if (!pscreen->resource_get_handle(pscreen, vlsurface->device->context,
+diff --git a/src/gallium/state_trackers/vdpau/surface.c b/src/gallium/state_trackers/vdpau/surface.c
+index 012d3036411..95bab8790db 100644
+--- a/src/gallium/state_trackers/vdpau/surface.c
++++ b/src/gallium/state_trackers/vdpau/surface.c
+@@ -526,7 +526,7 @@ VdpStatus vlVdpVideoSurfaceDMABuf(VdpVideoSurface surface,
+    }
+ 
+    memset(&whandle, 0, sizeof(struct winsys_handle));
+-   whandle.type = DRM_API_HANDLE_TYPE_FD;
++   whandle.type = WINSYS_HANDLE_TYPE_FD;
+    whandle.layer = surf->u.tex.first_layer;
+ 
+    pscreen = surf->texture->screen;
+diff --git a/src/gallium/state_trackers/xa/xa_tracker.c b/src/gallium/state_trackers/xa/xa_tracker.c
+index 03a3abf6835..3d268a17750 100644
+--- a/src/gallium/state_trackers/xa/xa_tracker.c
++++ b/src/gallium/state_trackers/xa/xa_tracker.c
+@@ -311,12 +311,12 @@ handle_type(enum xa_handle_type type)
+ {
+     switch (type) {
+     case xa_handle_type_kms:
+-	return DRM_API_HANDLE_TYPE_KMS;
++	return WINSYS_HANDLE_TYPE_KMS;
+     case xa_handle_type_fd:
+-        return DRM_API_HANDLE_TYPE_FD;
++        return WINSYS_HANDLE_TYPE_FD;
+     case xa_handle_type_shared:
+     default:
+-	return DRM_API_HANDLE_TYPE_SHARED;
++	return WINSYS_HANDLE_TYPE_SHARED;
+     }
+ }
+ 
+@@ -404,7 +404,7 @@ xa_surface_from_handle(struct xa_tracker *xa,
+ 		  uint32_t handle, uint32_t stride)
+ {
+     return xa_surface_from_handle2(xa, width, height, depth, stype, xa_format,
+-                                   DRM_API_HANDLE_TYPE_SHARED, flags, handle,
++                                   WINSYS_HANDLE_TYPE_SHARED, flags, handle,
+                                    stride);
+ }
+ 
+diff --git a/src/gallium/winsys/amdgpu/drm/amdgpu_bo.c b/src/gallium/winsys/amdgpu/drm/amdgpu_bo.c
+index 544403ac84f..b680be7c6ff 100644
+--- a/src/gallium/winsys/amdgpu/drm/amdgpu_bo.c
++++ b/src/gallium/winsys/amdgpu/drm/amdgpu_bo.c
+@@ -1275,10 +1275,10 @@ static struct pb_buffer *amdgpu_bo_from_handle(struct radeon_winsys *rws,
+    }
+ 
+    switch (whandle->type) {
+-   case DRM_API_HANDLE_TYPE_SHARED:
++   case WINSYS_HANDLE_TYPE_SHARED:
+       type = amdgpu_bo_handle_type_gem_flink_name;
+       break;
+-   case DRM_API_HANDLE_TYPE_FD:
++   case WINSYS_HANDLE_TYPE_FD:
+       type = amdgpu_bo_handle_type_dma_buf_fd;
+       break;
+    default:
+@@ -1362,13 +1362,13 @@ static bool amdgpu_bo_get_handle(struct pb_buffer *buffer,
+    bo->u.real.use_reusable_pool = false;
+ 
+    switch (whandle->type) {
+-   case DRM_API_HANDLE_TYPE_SHARED:
++   case WINSYS_HANDLE_TYPE_SHARED:
+       type = amdgpu_bo_handle_type_gem_flink_name;
+       break;
+-   case DRM_API_HANDLE_TYPE_FD:
++   case WINSYS_HANDLE_TYPE_FD:
+       type = amdgpu_bo_handle_type_dma_buf_fd;
+       break;
+-   case DRM_API_HANDLE_TYPE_KMS:
++   case WINSYS_HANDLE_TYPE_KMS:
+       type = amdgpu_bo_handle_type_kms;
+       break;
+    default:
+diff --git a/src/gallium/winsys/i915/drm/i915_drm_buffer.c b/src/gallium/winsys/i915/drm/i915_drm_buffer.c
+index 890f7dc2833..509984ac6ac 100644
+--- a/src/gallium/winsys/i915/drm/i915_drm_buffer.c
++++ b/src/gallium/winsys/i915/drm/i915_drm_buffer.c
+@@ -98,7 +98,7 @@ i915_drm_buffer_from_handle(struct i915_winsys *iws,
+    struct i915_drm_buffer *buf;
+    uint32_t tile = 0, swizzle = 0;
+ 
+-   if ((whandle->type != DRM_API_HANDLE_TYPE_SHARED) && (whandle->type != DRM_API_HANDLE_TYPE_FD))
++   if ((whandle->type != WINSYS_HANDLE_TYPE_SHARED) && (whandle->type != WINSYS_HANDLE_TYPE_FD))
+       return NULL;
+ 
+    if (whandle->offset != 0)
+@@ -110,9 +110,9 @@ i915_drm_buffer_from_handle(struct i915_winsys *iws,
+ 
+    buf->magic = 0xDEAD1337;
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED)
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED)
+        buf->bo = drm_intel_bo_gem_create_from_name(idws->gem_manager, "gallium3d_from_handle", whandle->handle);
+-   else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++   else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+        int fd = (int) whandle->handle;
+        buf->bo = drm_intel_bo_gem_create_from_prime(idws->gem_manager, fd, height * whandle->stride);
+    }
+@@ -143,7 +143,7 @@ i915_drm_buffer_get_handle(struct i915_winsys *iws,
+ {
+    struct i915_drm_buffer *buf = i915_drm_buffer(buffer);
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+       if (!buf->flinked) {
+          if (drm_intel_bo_flink(buf->bo, &buf->flink))
+             return FALSE;
+@@ -151,9 +151,9 @@ i915_drm_buffer_get_handle(struct i915_winsys *iws,
+       }
+ 
+       whandle->handle = buf->flink;
+-   } else if (whandle->type == DRM_API_HANDLE_TYPE_KMS) {
++   } else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
+       whandle->handle = buf->bo->handle;
+-   } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++   } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+       int fd;
+ 
+       if (drm_intel_bo_gem_export_to_prime(buf->bo, &fd))
+diff --git a/src/gallium/winsys/radeon/drm/radeon_drm_bo.c b/src/gallium/winsys/radeon/drm/radeon_drm_bo.c
+index fc95a98620b..6ed23530ab0 100644
+--- a/src/gallium/winsys/radeon/drm/radeon_drm_bo.c
++++ b/src/gallium/winsys/radeon/drm/radeon_drm_bo.c
+@@ -1124,10 +1124,10 @@ static struct pb_buffer *radeon_winsys_bo_from_handle(struct radeon_winsys *rws,
+      * The list of pairs is guarded by a mutex, of course. */
+     mtx_lock(&ws->bo_handles_mutex);
+ 
+-    if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++    if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+         /* First check if there already is an existing bo for the handle. */
+         bo = util_hash_table_get(ws->bo_names, (void*)(uintptr_t)whandle->handle);
+-    } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++    } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+         /* We must first get the GEM handle, as fds are unreliable keys */
+         r = drmPrimeFDToHandle(ws->fd, whandle->handle, &handle);
+         if (r)
+@@ -1151,7 +1151,7 @@ static struct pb_buffer *radeon_winsys_bo_from_handle(struct radeon_winsys *rws,
+         goto fail;
+     }
+ 
+-    if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++    if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+         struct drm_gem_open open_arg = {};
+         memset(&open_arg, 0, sizeof(open_arg));
+         /* Open the BO. */
+@@ -1163,7 +1163,7 @@ static struct pb_buffer *radeon_winsys_bo_from_handle(struct radeon_winsys *rws,
+         handle = open_arg.handle;
+         size = open_arg.size;
+         bo->flink_name = whandle->handle;
+-    } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++    } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+         size = lseek(whandle->handle, 0, SEEK_END);
+         /* 
+          * Could check errno to determine whether the kernel is new enough, but
+@@ -1268,7 +1268,7 @@ static bool radeon_winsys_bo_get_handle(struct pb_buffer *buffer,
+ 
+     bo->u.real.use_reusable_pool = false;
+ 
+-    if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++    if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+         if (!bo->flink_name) {
+             flink.handle = bo->handle;
+ 
+@@ -1283,9 +1283,9 @@ static bool radeon_winsys_bo_get_handle(struct pb_buffer *buffer,
+             mtx_unlock(&ws->bo_handles_mutex);
+         }
+         whandle->handle = bo->flink_name;
+-    } else if (whandle->type == DRM_API_HANDLE_TYPE_KMS) {
++    } else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
+         whandle->handle = bo->handle;
+-    } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++    } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+         if (drmPrimeHandleToFD(ws->fd, bo->handle, DRM_CLOEXEC, (int*)&whandle->handle))
+             return false;
+     }
+diff --git a/src/gallium/winsys/svga/drm/vmw_screen_dri.c b/src/gallium/winsys/svga/drm/vmw_screen_dri.c
+index 2a0ac7b3337..76f29e2aced 100644
+--- a/src/gallium/winsys/svga/drm/vmw_screen_dri.c
++++ b/src/gallium/winsys/svga/drm/vmw_screen_dri.c
+@@ -234,11 +234,11 @@ vmw_drm_surface_from_handle(struct svga_winsys_screen *sws,
+     }
+ 
+     switch (whandle->type) {
+-    case DRM_API_HANDLE_TYPE_SHARED:
+-    case DRM_API_HANDLE_TYPE_KMS:
++    case WINSYS_HANDLE_TYPE_SHARED:
++    case WINSYS_HANDLE_TYPE_KMS:
+        handle = whandle->handle;
+        break;
+-    case DRM_API_HANDLE_TYPE_FD:
++    case WINSYS_HANDLE_TYPE_FD:
+        ret = drmPrimeFDToHandle(vws->ioctl.drm_fd, whandle->handle,
+                                 &handle);
+        if (ret) {
+@@ -263,7 +263,7 @@ vmw_drm_surface_from_handle(struct svga_winsys_screen *sws,
+     /*
+      * Need to close the handle we got from prime.
+      */
+-    if (whandle->type == DRM_API_HANDLE_TYPE_FD)
++    if (whandle->type == WINSYS_HANDLE_TYPE_FD)
+        vmw_ioctl_surface_destroy(vws, handle);
+ 
+     if (ret) {
+@@ -340,11 +340,11 @@ vmw_drm_surface_get_handle(struct svga_winsys_screen *sws,
+     whandle->offset = 0;
+ 
+     switch (whandle->type) {
+-    case DRM_API_HANDLE_TYPE_SHARED:
+-    case DRM_API_HANDLE_TYPE_KMS:
++    case WINSYS_HANDLE_TYPE_SHARED:
++    case WINSYS_HANDLE_TYPE_KMS:
+        whandle->handle = vsrf->sid;
+        break;
+-    case DRM_API_HANDLE_TYPE_FD:
++    case WINSYS_HANDLE_TYPE_FD:
+        ret = drmPrimeHandleToFD(vws->ioctl.drm_fd, vsrf->sid, DRM_CLOEXEC,
+ 				(int *)&whandle->handle);
+        if (ret) {
+diff --git a/src/gallium/winsys/svga/drm/vmw_screen_ioctl.c b/src/gallium/winsys/svga/drm/vmw_screen_ioctl.c
+index 62a2af6d650..16dd5c8593a 100644
+--- a/src/gallium/winsys/svga/drm/vmw_screen_ioctl.c
++++ b/src/gallium/winsys/svga/drm/vmw_screen_ioctl.c
+@@ -290,13 +290,13 @@ vmw_ioctl_surface_req(const struct vmw_winsys_screen *vws,
+    int ret;
+ 
+    switch(whandle->type) {
+-   case DRM_API_HANDLE_TYPE_SHARED:
+-   case DRM_API_HANDLE_TYPE_KMS:
++   case WINSYS_HANDLE_TYPE_SHARED:
++   case WINSYS_HANDLE_TYPE_KMS:
+       *needs_unref = FALSE;
+       req->handle_type = DRM_VMW_HANDLE_LEGACY;
+       req->sid = whandle->handle;
+       break;
+-   case DRM_API_HANDLE_TYPE_FD:
++   case WINSYS_HANDLE_TYPE_FD:
+       if (!vws->ioctl.have_drm_2_6) {
+          uint32_t handle;
+ 
+diff --git a/src/gallium/winsys/sw/dri/dri_sw_winsys.c b/src/gallium/winsys/sw/dri/dri_sw_winsys.c
+index 00849985d6b..8335e52200f 100644
+--- a/src/gallium/winsys/sw/dri/dri_sw_winsys.c
++++ b/src/gallium/winsys/sw/dri/dri_sw_winsys.c
+@@ -26,6 +26,9 @@
+  *
+  **************************************************************************/
+ 
++#include <sys/ipc.h>
++#include <sys/shm.h>
++
+ #include "pipe/p_compiler.h"
+ #include "pipe/p_format.h"
+ #include "util/u_inlines.h"
+@@ -45,6 +48,7 @@ struct dri_sw_displaytarget
+    unsigned stride;
+ 
+    unsigned map_flags;
++   int shmid;
+    void *data;
+    void *mapped;
+    const void *front_private;
+@@ -79,6 +83,25 @@ dri_sw_is_displaytarget_format_supported( struct sw_winsys *ws,
+    return TRUE;
+ }
+ 
++static char *
++alloc_shm(struct dri_sw_displaytarget *dri_sw_dt, unsigned size)
++{
++   char *addr;
++
++   dri_sw_dt->shmid = shmget(IPC_PRIVATE, size, IPC_CREAT|0777);
++   if (dri_sw_dt->shmid < 0)
++      return NULL;
++
++   addr = (char *) shmat(dri_sw_dt->shmid, 0, 0);
++   /* mark the segment immediately for deletion to avoid leaks */
++   shmctl(dri_sw_dt->shmid, IPC_RMID, 0);
++
++   if (addr == (char *) -1)
++      return NULL;
++
++   return addr;
++}
++
+ static struct sw_displaytarget *
+ dri_sw_displaytarget_create(struct sw_winsys *winsys,
+                             unsigned tex_usage,
+@@ -88,6 +111,7 @@ dri_sw_displaytarget_create(struct sw_winsys *winsys,
+                             const void *front_private,
+                             unsigned *stride)
+ {
++   struct dri_sw_winsys *ws = dri_sw_winsys(winsys);
+    struct dri_sw_displaytarget *dri_sw_dt;
+    unsigned nblocksy, size, format_stride;
+ 
+@@ -106,7 +130,13 @@ dri_sw_displaytarget_create(struct sw_winsys *winsys,
+    nblocksy = util_format_get_nblocksy(format, height);
+    size = dri_sw_dt->stride * nblocksy;
+ 
+-   dri_sw_dt->data = align_malloc(size, alignment);
++   dri_sw_dt->shmid = -1;
++   if (ws->lf->put_image_shm)
++      dri_sw_dt->data = alloc_shm(dri_sw_dt, size);
++
++   if(!dri_sw_dt->data)
++      dri_sw_dt->data = align_malloc(size, alignment);
++
+    if(!dri_sw_dt->data)
+       goto no_data;
+ 
+@@ -125,7 +155,12 @@ dri_sw_displaytarget_destroy(struct sw_winsys *ws,
+ {
+    struct dri_sw_displaytarget *dri_sw_dt = dri_sw_displaytarget(dt);
+ 
+-   align_free(dri_sw_dt->data);
++   if (dri_sw_dt->shmid >= 0) {
++      shmdt(dri_sw_dt->data);
++      shmctl(dri_sw_dt->shmid, IPC_RMID, 0);
++   } else {
++      align_free(dri_sw_dt->data);
++   }
+ 
+    FREE(dri_sw_dt);
+ }
+@@ -174,7 +209,15 @@ dri_sw_displaytarget_get_handle(struct sw_winsys *winsys,
+                                 struct sw_displaytarget *dt,
+                                 struct winsys_handle *whandle)
+ {
+-   assert(0);
++   struct dri_sw_displaytarget *dri_sw_dt = dri_sw_displaytarget(dt);
++
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHMID) {
++      if (dri_sw_dt->shmid < 0)
++         return FALSE;
++      whandle->handle = dri_sw_dt->shmid;
++      return TRUE;
++   }
++
+    return FALSE;
+ }
+ 
+@@ -187,25 +230,38 @@ dri_sw_displaytarget_display(struct sw_winsys *ws,
+    struct dri_sw_winsys *dri_sw_ws = dri_sw_winsys(ws);
+    struct dri_sw_displaytarget *dri_sw_dt = dri_sw_displaytarget(dt);
+    struct dri_drawable *dri_drawable = (struct dri_drawable *)context_private;
+-   unsigned width, height;
++   unsigned width, height, x = 0, y = 0;
+    unsigned blsize = util_format_get_blocksize(dri_sw_dt->format);
++   unsigned offset = 0;
++   void *data = dri_sw_dt->data;
+ 
+    /* Set the width to 'stride / cpp'.
+     *
+     * PutImage correctly clips to the width of the dst drawable.
+     */
+-   width = dri_sw_dt->stride / blsize;
+-
+-   height = dri_sw_dt->height;
+-
+    if (box) {
+-       void *data;
+-       data = (char *)dri_sw_dt->data + (dri_sw_dt->stride * box->y) + box->x * blsize;
+-       dri_sw_ws->lf->put_image2(dri_drawable, data,
+-                                 box->x, box->y, box->width, box->height, dri_sw_dt->stride);
++      offset = (dri_sw_dt->stride * box->y) + box->x * blsize;
++      data += offset;
++      x = box->x;
++      y = box->y;
++      width = box->width;
++      height = box->height;
+    } else {
+-       dri_sw_ws->lf->put_image(dri_drawable, dri_sw_dt->data, width, height);
++      width = dri_sw_dt->stride / blsize;
++      height = dri_sw_dt->height;
+    }
++
++   if (dri_sw_dt->shmid != -1) {
++      dri_sw_ws->lf->put_image_shm(dri_drawable, dri_sw_dt->shmid, dri_sw_dt->data, offset,
++                                   x, y, width, height, dri_sw_dt->stride);
++      return;
++   }
++
++   if (box)
++      dri_sw_ws->lf->put_image2(dri_drawable, data,
++                                x, y, width, height, dri_sw_dt->stride);
++   else
++      dri_sw_ws->lf->put_image(dri_drawable, data, width, height);
+ }
+ 
+ static void
+diff --git a/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c b/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c
+index 22e1c936ac5..2df5f589e48 100644
+--- a/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c
++++ b/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c
+@@ -292,8 +292,8 @@ kms_sw_displaytarget_from_handle(struct sw_winsys *ws,
+    struct kms_sw_winsys *kms_sw = kms_sw_winsys(ws);
+    struct kms_sw_displaytarget *kms_sw_dt;
+ 
+-   assert(whandle->type == DRM_API_HANDLE_TYPE_KMS ||
+-          whandle->type == DRM_API_HANDLE_TYPE_FD);
++   assert(whandle->type == WINSYS_HANDLE_TYPE_KMS ||
++          whandle->type == WINSYS_HANDLE_TYPE_FD);
+ 
+    if (whandle->offset != 0) {
+       DEBUG_PRINT("KMS-DEBUG: attempt to import unsupported winsys offset %d\n",
+@@ -302,7 +302,7 @@ kms_sw_displaytarget_from_handle(struct sw_winsys *ws,
+    }
+ 
+    switch(whandle->type) {
+-   case DRM_API_HANDLE_TYPE_FD:
++   case WINSYS_HANDLE_TYPE_FD:
+       kms_sw_dt = kms_sw_displaytarget_add_from_prime(kms_sw, whandle->handle,
+                                                       templ->width0,
+                                                       templ->height0,
+@@ -310,7 +310,7 @@ kms_sw_displaytarget_from_handle(struct sw_winsys *ws,
+       if (kms_sw_dt)
+          *stride = kms_sw_dt->stride;
+       return (struct sw_displaytarget *)kms_sw_dt;
+-   case DRM_API_HANDLE_TYPE_KMS:
++   case WINSYS_HANDLE_TYPE_KMS:
+       kms_sw_dt = kms_sw_displaytarget_find_and_ref(kms_sw, whandle->handle);
+       if (kms_sw_dt) {
+          *stride = kms_sw_dt->stride;
+@@ -334,12 +334,12 @@ kms_sw_displaytarget_get_handle(struct sw_winsys *winsys,
+    struct kms_sw_displaytarget *kms_sw_dt = kms_sw_displaytarget(dt);
+ 
+    switch(whandle->type) {
+-   case DRM_API_HANDLE_TYPE_KMS:
++   case WINSYS_HANDLE_TYPE_KMS:
+       whandle->handle = kms_sw_dt->handle;
+       whandle->stride = kms_sw_dt->stride;
+       whandle->offset = 0;
+       return TRUE;
+-   case DRM_API_HANDLE_TYPE_FD:
++   case WINSYS_HANDLE_TYPE_FD:
+       if (!drmPrimeHandleToFD(kms_sw->fd, kms_sw_dt->handle,
+                              DRM_CLOEXEC, (int*)&whandle->handle)) {
+          whandle->stride = kms_sw_dt->stride;
+diff --git a/src/gallium/winsys/virgl/drm/virgl_drm_winsys.c b/src/gallium/winsys/virgl/drm/virgl_drm_winsys.c
+index 71e652ebf31..cd16413bb8e 100644
+--- a/src/gallium/winsys/virgl/drm/virgl_drm_winsys.c
++++ b/src/gallium/winsys/virgl/drm/virgl_drm_winsys.c
+@@ -398,7 +398,7 @@ virgl_drm_winsys_resource_create_handle(struct virgl_winsys *qws,
+ 
+    mtx_lock(&qdws->bo_handles_mutex);
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+       res = util_hash_table_get(qdws->bo_names, (void*)(uintptr_t)handle);
+       if (res) {
+          struct virgl_hw_res *r = NULL;
+@@ -407,7 +407,7 @@ virgl_drm_winsys_resource_create_handle(struct virgl_winsys *qws,
+       }
+    }
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++   if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+       int r;
+       r = drmPrimeFDToHandle(qdws->fd, whandle->handle, &handle);
+       if (r) {
+@@ -428,7 +428,7 @@ virgl_drm_winsys_resource_create_handle(struct virgl_winsys *qws,
+    if (!res)
+       goto done;
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++   if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+       res->bo_handle = handle;
+    } else {
+       fprintf(stderr, "gem open handle %d\n", handle);
+@@ -478,7 +478,7 @@ static boolean virgl_drm_winsys_resource_get_handle(struct virgl_winsys *qws,
+    if (!res)
+        return FALSE;
+ 
+-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
++   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+       if (!res->flinked) {
+          memset(&flink, 0, sizeof(flink));
+          flink.handle = res->bo_handle;
+@@ -494,9 +494,9 @@ static boolean virgl_drm_winsys_resource_get_handle(struct virgl_winsys *qws,
+          mtx_unlock(&qdws->bo_handles_mutex);
+       }
+       whandle->handle = res->flink;
+-   } else if (whandle->type == DRM_API_HANDLE_TYPE_KMS) {
++   } else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
+       whandle->handle = res->bo_handle;
+-   } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
++   } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+       if (drmPrimeHandleToFD(qdws->fd, res->bo_handle, DRM_CLOEXEC, (int*)&whandle->handle))
+             return FALSE;
+       mtx_lock(&qdws->bo_handles_mutex);
+diff --git a/src/glx/drisw_glx.c b/src/glx/drisw_glx.c
+index df2467a5c2d..a2777100a32 100644
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -28,10 +28,12 @@
+ #include <dlfcn.h>
+ #include "dri_common.h"
+ #include "drisw_priv.h"
++#include <X11/extensions/shmproto.h>
++#include <assert.h>
+ 
+ static Bool
+-XCreateDrawable(struct drisw_drawable * pdp,
+-                Display * dpy, XID drawable, int visualid)
++XCreateGCs(struct drisw_drawable * pdp,
++           Display * dpy, XID drawable, int visualid)
+ {
+    XGCValues gcvalues;
+    long visMask;
+@@ -56,15 +58,78 @@ XCreateDrawable(struct drisw_drawable * pdp,
+    if (!pdp->visinfo || num_visuals == 0)
+       return False;
+ 
+-   /* create XImage */
+-   pdp->ximage = XCreateImage(dpy,
+-                              pdp->visinfo->visual,
+-                              pdp->visinfo->depth,
+-                              ZPixmap, 0,             /* format, offset */
+-                              NULL,                   /* data */
+-                              0, 0,                   /* width, height */
+-                              32,                     /* bitmap_pad */
+-                              0);                     /* bytes_per_line */
++   return True;
++}
++
++static int xshm_error = 0;
++static int xshm_opcode = -1;
++
++/**
++ * Catches potential Xlib errors.
++ */
++static int
++handle_xerror(Display *dpy, XErrorEvent *event)
++{
++   (void) dpy;
++
++   assert(xshm_opcode != -1);
++   if (event->request_code != xshm_opcode ||
++       event->minor_code != X_ShmAttach)
++      return 0;
++
++   xshm_error = 1;
++   return 0;
++}
++
++static Bool
++XCreateDrawable(struct drisw_drawable * pdp, int shmid, Display * dpy)
++{
++   if (pdp->ximage) {
++      XDestroyImage(pdp->ximage);
++      pdp->ximage = NULL;
++   }
++
++   if (!xshm_error && shmid >= 0) {
++      pdp->shminfo.shmid = shmid;
++      pdp->ximage = XShmCreateImage(dpy,
++                                    pdp->visinfo->visual,
++                                    pdp->visinfo->depth,
++                                    ZPixmap,              /* format */
++                                    NULL,                 /* data */
++                                    &pdp->shminfo,        /* shminfo */
++                                    0, 0);                /* width, height */
++      if (pdp->ximage != NULL) {
++         int (*old_handler)(Display *, XErrorEvent *);
++
++         /* dispatch pending errors */
++         XSync(dpy, False);
++
++         old_handler = XSetErrorHandler(handle_xerror);
++         /* This may trigger the X protocol error we're ready to catch: */
++         XShmAttach(dpy, &pdp->shminfo);
++         XSync(dpy, False);
++
++         if (xshm_error) {
++         /* we are on a remote display, this error is normal, don't print it */
++            XDestroyImage(pdp->ximage);
++            pdp->ximage = NULL;
++         }
++
++         (void) XSetErrorHandler(old_handler);
++      }
++   }
++
++   if (pdp->ximage == NULL) {
++      pdp->shminfo.shmid = -1;
++      pdp->ximage = XCreateImage(dpy,
++                                 pdp->visinfo->visual,
++                                 pdp->visinfo->depth,
++                                 ZPixmap, 0,             /* format, offset */
++                                 NULL,                   /* data */
++                                 0, 0,                   /* width, height */
++                                 32,                     /* bitmap_pad */
++                                 0);                     /* bytes_per_line */
++   }
+ 
+   /**
+    * swrast does not handle 24-bit depth with 24 bpp, so let X do the
+@@ -79,7 +144,9 @@ XCreateDrawable(struct drisw_drawable * pdp,
+ static void
+ XDestroyDrawable(struct drisw_drawable * pdp, Display * dpy, XID drawable)
+ {
+-   XDestroyImage(pdp->ximage);
++   if (pdp->ximage)
++      XDestroyImage(pdp->ximage);
++
+    free(pdp->visinfo);
+ 
+    XFreeGC(dpy, pdp->gc);
+@@ -133,9 +200,9 @@ bytes_per_line(unsigned pitch_bits, unsigned mul)
+ }
+ 
+ static void
+-swrastPutImage2(__DRIdrawable * draw, int op,
++swrastXPutImage(__DRIdrawable * draw, int op,
+                 int x, int y, int w, int h, int stride,
+-                char *data, void *loaderPrivate)
++                int shmid, char *data, void *loaderPrivate)
+ {
+    struct drisw_drawable *pdp = loaderPrivate;
+    __GLXDRIdrawable *pdraw = &(pdp->base);
+@@ -144,6 +211,11 @@ swrastPutImage2(__DRIdrawable * draw, int op,
+    XImage *ximage;
+    GC gc;
+ 
++   if (!pdp->ximage || shmid != pdp->shminfo.shmid) {
++      if (!XCreateDrawable(pdp, shmid, dpy))
++         return;
++   }
++
+    switch (op) {
+    case __DRI_SWRAST_IMAGE_OP_DRAW:
+       gc = pdp->gc;
+@@ -156,24 +228,52 @@ swrastPutImage2(__DRIdrawable * draw, int op,
+    }
+ 
+    drawable = pdraw->xDrawable;
+-
+    ximage = pdp->ximage;
+-   ximage->data = data;
+-   ximage->width = w;
+-   ximage->height = h;
+    ximage->bytes_per_line = stride ? stride : bytes_per_line(w * ximage->bits_per_pixel, 32);
++   ximage->data = data;
+ 
+-   XPutImage(dpy, drawable, gc, ximage, 0, 0, x, y, w, h);
+-
++   if (pdp->shminfo.shmid >= 0) {
++      ximage->width = ximage->bytes_per_line / ((ximage->bits_per_pixel + 7)/ 8);
++      ximage->height = h;
++      XShmPutImage(dpy, drawable, gc, ximage, 0, 0, x, y, w, h, False);
++      XSync(dpy, False);
++   } else {
++      ximage->width = w;
++      ximage->height = h;
++      XPutImage(dpy, drawable, gc, ximage, 0, 0, x, y, w, h);
++   }
+    ximage->data = NULL;
+ }
+ 
++static void
++swrastPutImageShm(__DRIdrawable * draw, int op,
++                  int x, int y, int w, int h, int stride,
++                  int shmid, char *shmaddr, unsigned offset,
++                  void *loaderPrivate)
++{
++   struct drisw_drawable *pdp = loaderPrivate;
++
++   pdp->shminfo.shmaddr = shmaddr;
++   swrastXPutImage(draw, op, x, y, w, h, stride, shmid,
++                   shmaddr + offset, loaderPrivate);
++}
++
++static void
++swrastPutImage2(__DRIdrawable * draw, int op,
++                int x, int y, int w, int h, int stride,
++                char *data, void *loaderPrivate)
++{
++   swrastXPutImage(draw, op, x, y, w, h, stride, -1,
++                   data, loaderPrivate);
++}
++
+ static void
+ swrastPutImage(__DRIdrawable * draw, int op,
+                int x, int y, int w, int h,
+                char *data, void *loaderPrivate)
+ {
+-   swrastPutImage2(draw, op, x, y, w, h, 0, data, loaderPrivate);
++   swrastXPutImage(draw, op, x, y, w, h, 0, -1,
++                   data, loaderPrivate);
+ }
+ 
+ static void
+@@ -187,6 +287,11 @@ swrastGetImage2(__DRIdrawable * read,
+    Drawable readable;
+    XImage *ximage;
+ 
++   if (!prp->ximage || prp->shminfo.shmid >= 0) {
++      if (!XCreateDrawable(prp, -1, dpy))
++         return;
++   }
++
+    readable = pread->xDrawable;
+ 
+    ximage = prp->ximage;
+@@ -208,6 +313,49 @@ swrastGetImage(__DRIdrawable * read,
+    swrastGetImage2(read, x, y, w, h, 0, data, loaderPrivate);
+ }
+ 
++static void
++swrastGetImageShm(__DRIdrawable * read,
++                  int x, int y, int w, int h,
++                  int shmid, void *loaderPrivate)
++{
++   struct drisw_drawable *prp = loaderPrivate;
++   __GLXDRIdrawable *pread = &(prp->base);
++   Display *dpy = pread->psc->dpy;
++   Drawable readable;
++   XImage *ximage;
++
++   if (!prp->ximage || shmid != prp->shminfo.shmid) {
++      if (!XCreateDrawable(prp, shmid, dpy))
++         return;
++   }
++   readable = pread->xDrawable;
++
++   ximage = prp->ximage;
++   ximage->data = prp->shminfo.shmaddr; /* no offset */
++   ximage->width = w;
++   ximage->height = h;
++   ximage->bytes_per_line = bytes_per_line(w * ximage->bits_per_pixel, 32);
++
++   XShmGetImage(dpy, readable, ximage, x, y, ~0L);
++}
++
++static const __DRIswrastLoaderExtension swrastLoaderExtension_shm = {
++   .base = {__DRI_SWRAST_LOADER, 4 },
++
++   .getDrawableInfo     = swrastGetDrawableInfo,
++   .putImage            = swrastPutImage,
++   .getImage            = swrastGetImage,
++   .putImage2           = swrastPutImage2,
++   .getImage2           = swrastGetImage2,
++   .putImageShm         = swrastPutImageShm,
++   .getImageShm         = swrastGetImageShm,
++};
++
++static const __DRIextension *loader_extensions_shm[] = {
++   &swrastLoaderExtension_shm.base,
++   NULL
++};
++
+ static const __DRIswrastLoaderExtension swrastLoaderExtension = {
+    .base = {__DRI_SWRAST_LOADER, 3 },
+ 
+@@ -218,7 +366,7 @@ static const __DRIswrastLoaderExtension swrastLoaderExtension = {
+    .getImage2           = swrastGetImage2,
+ };
+ 
+-static const __DRIextension *loader_extensions[] = {
++static const __DRIextension *loader_extensions_noshm[] = {
+    &swrastLoaderExtension.base,
+    NULL
+ };
+@@ -527,7 +675,7 @@ driswCreateDrawable(struct glx_screen *base, XID xDrawable,
+    pdp->base.drawable = drawable;
+    pdp->base.psc = &psc->base;
+ 
+-   ret = XCreateDrawable(pdp, psc->base.dpy, xDrawable, modes->visualID);
++   ret = XCreateGCs(pdp, psc->base.dpy, xDrawable, modes->visualID);
+    if (!ret) {
+       free(pdp);
+       return NULL;
+@@ -661,6 +809,14 @@ driswBindExtensions(struct drisw_screen *psc, const __DRIextension **extensions)
+    }
+ }
+ 
++static int
++check_xshm(Display *dpy)
++{
++   int ignore;
++
++   return XQueryExtension(dpy, "MIT-SHM", &xshm_opcode, &ignore, &ignore);
++}
++
+ static struct glx_screen *
+ driswCreateScreen(int screen, struct glx_display *priv)
+ {
+@@ -670,6 +826,7 @@ driswCreateScreen(int screen, struct glx_display *priv)
+    struct drisw_screen *psc;
+    struct glx_config *configs = NULL, *visuals = NULL;
+    int i;
++   const __DRIextension **loader_extensions_local;
+ 
+    psc = calloc(1, sizeof *psc);
+    if (psc == NULL)
+@@ -688,6 +845,11 @@ driswCreateScreen(int screen, struct glx_display *priv)
+    if (extensions == NULL)
+       goto handle_error;
+ 
++   if (!check_xshm(psc->base.dpy))
++      loader_extensions_local = loader_extensions_noshm;
++   else
++      loader_extensions_local = loader_extensions_shm;
++
+    for (i = 0; extensions[i]; i++) {
+       if (strcmp(extensions[i]->name, __DRI_CORE) == 0)
+ 	 psc->core = (__DRIcoreExtension *) extensions[i];
+@@ -704,12 +866,12 @@ driswCreateScreen(int screen, struct glx_display *priv)
+ 
+    if (psc->swrast->base.version >= 4) {
+       psc->driScreen =
+-         psc->swrast->createNewScreen2(screen, loader_extensions,
++         psc->swrast->createNewScreen2(screen, loader_extensions_local,
+                                        extensions,
+                                        &driver_configs, psc);
+    } else {
+       psc->driScreen =
+-         psc->swrast->createNewScreen(screen, loader_extensions,
++         psc->swrast->createNewScreen(screen, loader_extensions_local,
+                                       &driver_configs, psc);
+    }
+    if (psc->driScreen == NULL) {
+diff --git a/src/glx/drisw_priv.h b/src/glx/drisw_priv.h
+index 5d479003114..a670da2d33b 100644
+--- a/src/glx/drisw_priv.h
++++ b/src/glx/drisw_priv.h
+@@ -23,6 +23,8 @@
+  * SOFTWARE.
+  */
+ 
++#include <X11/extensions/XShm.h>
++
+ struct drisw_display
+ {
+    __GLXDRIdisplay base;
+@@ -62,6 +64,7 @@ struct drisw_drawable
+    __DRIdrawable *driDrawable;
+    XVisualInfo *visinfo;
+    XImage *ximage;
++   XShmSegmentInfo shminfo;
+ };
+ 
+ _X_HIDDEN int
+diff --git a/src/mesa/state_tracker/st_cb_memoryobjects.c b/src/mesa/state_tracker/st_cb_memoryobjects.c
+index 63a8c2a0e00..39174bc9f75 100644
+--- a/src/mesa/state_tracker/st_cb_memoryobjects.c
++++ b/src/mesa/state_tracker/st_cb_memoryobjects.c
+@@ -65,7 +65,7 @@ st_import_memoryobj_fd(struct gl_context *ctx,
+    struct pipe_screen *screen = pipe->screen;
+    struct winsys_handle whandle;
+ 
+-   whandle.type = DRM_API_HANDLE_TYPE_FD;
++   whandle.type = WINSYS_HANDLE_TYPE_FD;
+    whandle.handle = fd;
+    whandle.offset = 0;
+    whandle.layer = 0;
+diff --git a/src/mesa/state_tracker/st_vdpau.c b/src/mesa/state_tracker/st_vdpau.c
+index eb61aef1116..d0b9cfbf4f8 100644
+--- a/src/mesa/state_tracker/st_vdpau.c
++++ b/src/mesa/state_tracker/st_vdpau.c
+@@ -127,7 +127,7 @@ st_vdpau_resource_from_description(struct gl_context *ctx,
+    templ.usage = PIPE_USAGE_DEFAULT;
+ 
+    memset(&whandle, 0, sizeof(whandle));
+-   whandle.type = DRM_API_HANDLE_TYPE_FD;
++   whandle.type = WINSYS_HANDLE_TYPE_FD;
+    whandle.handle = desc->handle;
+    whandle.offset = desc->offset;
+    whandle.stride = desc->stride;
