@@ -1,17 +1,17 @@
 %if 0%{?rhel}
 %define with_private_llvm 1
-%define with_vdpau 1
 %else
 %define with_private_llvm 0
+%endif
+
 %define with_vdpau 1
 %define with_wayland 1
-%endif
 
 %ifnarch ppc
 %define with_radeonsi 1
 %endif
 
-%ifarch %{arm}
+%ifarch %{arm} aarch64
 %define with_freedreno 1
 %endif
 
@@ -22,7 +22,7 @@
 %define with_llvm 1
 %endif
 
-%ifarch s390 s390x aarch64
+%ifarch s390 s390x
 %define with_hardware 0
 %ifarch s390
 %define base_drivers swrast
@@ -55,13 +55,13 @@
 
 %define _default_patch_fuzz 2
 
-%define gitdate 20170307
+%define gitdate 20171019
 #% define snapshot 
 
 Summary: Mesa graphics libraries
 Name: mesa
-Version: 17.0.1
-Release: 6.%{gitdate}%{?dist}
+Version: 17.2.3
+Release: 8.%{gitdate}%{?dist}
 License: MIT
 Group: System Environment/Libraries
 URL: http://www.mesa3d.org
@@ -77,24 +77,31 @@ Source3: make-git-snapshot.sh
 # Fedora opts to ignore the optional part of clause 2 and treat that code as 2 clause BSD.
 Source4: Mesa-MLAA-License-Clarification-Email.txt
 
+Patch0: mesa-17.3-final.patch
 Patch1: nv50-fix-build.patch
+Patch2: 0001-mesa-Squash-merge-of-S3TC-support.patch
 Patch9: mesa-8.0-llvmpipe-shmget.patch
 Patch12: mesa-8.0.1-fix-16bpp.patch
 Patch15: mesa-9.2-hardware-float.patch
 Patch20: mesa-10.2-evergreen-big-endian.patch
 
-Patch30: 0001-glsl-Allow-compatibility-shaders-with-MESA_GL_VERSIO.patch
+# For bz1503861, fix visual artifacts on DRI PRIME offloading
+# Feel free to drop these patches during the next mesa rebase (>17.2.3)
+Patch30: 0001-intel-blorp-Use-mocs.tex-for-depth-stencil.patch
+Patch31: 0002-anv-blorp-Add-a-device-parameter-to-blorp_surf_for_a.patch
+Patch32: 0003-blorp-Turn-anv_CmdCopyBuffer-into-a-blorp_buffer_cop.patch
+Patch33: 0004-intel-blorp-Make-the-MOCS-setting-part-of-blorp_addr.patch
+Patch34: 0005-i965-Use-PTE-MOCS-for-all-external-buffers.patch
 
-Patch40: 0001-Revert-draw-use-SoA-fetch-not-AoS-one.patch
-
-Patch50: 0001-gallivm-Make-sure-module-has-the-correct-data-layout.patch
+Patch40: 0001-intel-Add-more-Coffee-Lake-PCI-IDs.patch
 
 BuildRequires: pkgconfig autoconf automake libtool
 %if %{with_hardware}
 BuildRequires: kernel-headers
 BuildRequires: xorg-x11-server-devel
 %endif
-BuildRequires: libdrm-devel >= 2.4.60
+BuildRequires: libatomic
+BuildRequires: libdrm-devel >= 2.4.83
 BuildRequires: libXxf86vm-devel
 BuildRequires: expat-devel
 BuildRequires: xorg-x11-proto-devel
@@ -112,7 +119,7 @@ BuildRequires: python-mako
 BuildRequires: gettext
 %if 0%{?with_llvm}
 %if 0%{?with_private_llvm}
-BuildRequires: mesa-private-llvm-devel >= 3.9
+BuildRequires: llvm-private-devel >= 5.0
 %else
 BuildRequires: llvm-devel >= 3.0
 %endif
@@ -121,9 +128,10 @@ BuildRequires: elfutils-libelf-devel
 BuildRequires: libxml2-python
 BuildRequires: libudev-devel
 BuildRequires: bison flex
-%if !0%{?rhel}
-BuildRequires: pkgconfig(wayland-client) >= %{min_wayland_version}
-BuildRequires: pkgconfig(wayland-server) >= %{min_wayland_version}
+%if %{with wayland}
+BuildRequires: pkgconfig(wayland-client) >= 1.11
+BuildRequires: pkgconfig(wayland-server) >= 1.11
+BuildRequires: pkgconfig(wayland-protocols) >= 1.8.0
 %endif
 BuildRequires: mesa-libGL-devel
 %if 0%{?with_vdpau}
@@ -139,6 +147,7 @@ Summary: Mesa libGL runtime libraries and DRI drivers
 Group: System Environment/Libraries
 Provides: libGL
 Requires: mesa-libglapi = %{version}-%{release}
+Requires: libdrm >= 2.4.83
 
 %description libGL
 Mesa libGL runtime library.
@@ -171,6 +180,7 @@ Mesa driver filesystem
 Summary: Mesa-based DRI drivers
 Group: User Interface/X Hardware Support
 Requires: mesa-filesystem%{?_isa}
+Requires: libdrm >= 2.4.83
 Obsoletes: mesa-dri1-drivers < 7.12
 Obsoletes: mesa-dri-llvmcore <= 7.12
 %description dri-drivers
@@ -237,6 +247,7 @@ Mesa offscreen rendering development package
 Summary: Mesa gbm library
 Group: System Environment/Libraries
 Provides: libgbm
+Requires: libdrm >= 2.4.83
 Requires: mesa-libglapi = %{version}-%{release}
 
 %description libgbm
@@ -253,7 +264,7 @@ Provides: libgbm-devel
 Mesa libgbm development package
 
 
-%if !0%{?rhel}
+%if %{with wayland}
 %package libwayland-egl
 Summary: Mesa libwayland-egl library
 Group: System Environment/Libraries
@@ -314,7 +325,9 @@ The drivers with support for the Vulkan API.
 %setup -q -n mesa-%{gitdate}
 # make sure you run sanitize-tarball.sh on mesa source tarball or next line will exit
 grep -q ^/ src/gallium/auxiliary/vl/vl_decoder.c && exit 1
+%patch0 -p1 -b .mesa17.2.3
 %patch1 -p1 -b .nv50rtti
+%patch2 -p1 -b .s3tc
 
 # this fastpath is:
 # - broken with swrast classic
@@ -330,15 +343,17 @@ grep -q ^/ src/gallium/auxiliary/vl/vl_decoder.c && exit 1
 %patch15 -p1 -b .hwfloat
 #patch20 -p1 -b .egbe
 
-%patch30 -p1 -b .glslfix
+%patch30 -p1 -b .bz1503861_patch1
+%patch31 -p1 -b .bz1503861_patch2
+%patch32 -p1 -b .bz1503861_patch3
+%patch33 -p1 -b .bz1503861_patch4
+%patch34 -p1 -b .bz1503861_patch5
 
-%patch40 -p1 -b .bigendian-fix
-
-%patch50 -p1 -b .gallivm-datalayout-fix
+%patch40 -p1 -b .cfl_ids
 
 %if 0%{with_private_llvm}
-sed -i 's/\[llvm-config\]/\[mesa-private-llvm-config-%{__isa_bits}\]/g' configure.ac
-sed -i 's/`$LLVM_CONFIG --version`/$LLVM_VERSION_MAJOR.$LLVM_VERSION_MINOR-mesa/' configure.ac
+sed -i 's/\[llvm-config\]/\[llvm-private-config-%{__isa_bits}\]/g' configure.ac
+sed -i 's/`$LLVM_CONFIG --version`/$LLVM_VERSION_MAJOR.$LLVM_VERSION_MINOR-rhel/' configure.ac
 %endif
 
 # need to use libdrm_nouveau2 on F17
@@ -389,7 +404,7 @@ export CXXFLAGS="$RPM_OPT_FLAGS -fno-rtti -fno-exceptions"
     --enable-dri \
 %if %{with_hardware}
     %{?with_vmware:--enable-xa} \
-    --with-gallium-drivers=%{?with_vmware:svga,}%{?with_radeonsi:radeonsi,}%{?with_llvm:swrast,r600,r300}%{?with_freedreno:freedreno,},nouveau,virgl \
+    --with-gallium-drivers=%{?with_vmware:svga,}%{?with_radeonsi:radeonsi,}%{?with_llvm:swrast,r600,r300,}%{?with_freedreno:freedreno,}nouveau,virgl \
 %else
     --with-gallium-drivers=%{?with_llvm:swrast} \
 %endif
@@ -513,6 +528,7 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 %if 0%{?with_freedreno}
 %{_libdir}/dri/kgsl_dri.so
+%{_libdir}/dri/msm_dri.so
 %endif
 %{_libdir}/dri/nouveau_dri.so
 %{_libdir}/dri/virtio_gpu_dri.so
@@ -607,7 +623,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_includedir}/gbm.h
 %{_libdir}/pkgconfig/gbm.pc
 
-%if !0%{?rhel}
+%if %{with wayland}
 %files libwayland-egl
 %defattr(-,root,root,-)
 %{_libdir}/libwayland-egl.so.1
@@ -654,6 +670,42 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Mon Jan 15 2018 Dave Airlie <airlied@redhat.com> - 17.2.3-8.20171019
+- Add missing Intel CFL ids.
+
+* Thu Nov 30 2017 Lyude Paul <lyude@redhat.com> - 17.2.3-7.20171019
+- Add patches to fix cache lines with DRI_PRIME + amdgpu (#1503861)
+
+* Fri Nov 17 2017 Dave Airlie <airlied@redhat.com> - 17.2.3-6.20171019
+- fix libgbm/dri-drivers requires on libdrm
+
+* Wed Oct 25 2017 Yaakov Selkowitz <yselkowi@redhat.com> - 17.2.3-5.20171019
+- Enable hardware drivers on aarch64 (#1358444)
+
+* Tue Oct 24 2017 Dave Airlie <airlied@redhat.com> - 17.2.3-4.20171019
+- Update gitdate and clean out sources.
+
+* Tue Oct 24 2017 Dave Airlie <airlied@redhat.com> - 17.2.3-3.20171019
+- Add final 17.2.3 patch.
+
+* Thu Oct 19 2017 Tom Stellard <tstellar@redhat.com> - 17.2.3-2.20171019
+- Switch to llvm-private
+
+* Thu Oct 19 2017 Dave Airlie <airlied@redhat.com> - 17.2.3-1.20171019
+- rebase to 17.2.3
+
+* Thu Oct 05 2017 Dave Airlie <airlied@redhat.com> - 17.2.2-1.20171005
+- rebase to 17.2.2 final release + s3tc support
+
+* Thu Sep 28 2017 Olivier Fourdan <ofourdan@redhat.com> - 17.2.0-2.20170911
+- Enable wayland-egl, add dependencies on wayland-protocols (#1481412)
+
+* Mon Sep 11 2017 Dave Airlie <airlied@redhat.com> - 17.2.0-1.20170911
+- rebase to 17.2.0 final release
+
+* Tue Aug 15 2017 Dave Airlie <airlied@redhat.com> - 17.2.0-0.1.20170815
+- rebase to 17.2-rc4
+
 * Thu May 11 2017 Dave Airlie <airlied@redhat.com> - 17.0.1-6.20170307
 - enable VDPAU drivers (#1297276)
 
