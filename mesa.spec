@@ -41,7 +41,7 @@
 %endif
 %endif
 
-%ifarch x86_64 ppc64le
+%ifarch %{ix86} x86_64 ppc64le
 %define with_vulkan 1
 %else
 %define with_vulkan 0
@@ -60,8 +60,8 @@
 
 Summary: Mesa graphics libraries
 Name: mesa
-Version: 18.0.5
-Release: 4%{?dist}
+Version: 18.3.4
+Release: 5%{?dist}
 License: MIT
 Group: System Environment/Libraries
 URL: http://www.mesa3d.org
@@ -78,14 +78,14 @@ Source3: make-git-snapshot.sh
 Source4: Mesa-MLAA-License-Clarification-Email.txt
 
 Patch1: nv50-fix-build.patch
-# backport of dri sw xshm support to help qxl
-Patch2: dri-sw-xshm-support.patch
 
 # fix some timeout mismatch warnings (backport from upstream)
 Patch3: fix-timeout-warnings.patch
 
-# disable xshm
-Patch4: xshm-disable.patch
+# Fix dri shm leak
+Patch4: 0001-glx-fix-shared-memory-leak-in-X11.patch
+# fix remove shm
+Patch5: fix-llvmpipe-remote-shm.patch
 
 Patch12: mesa-8.0.1-fix-16bpp.patch
 Patch15: mesa-9.2-hardware-float.patch
@@ -109,6 +109,7 @@ BuildRequires: libXfixes-devel
 BuildRequires: libXdamage-devel
 BuildRequires: libXi-devel
 BuildRequires: libXmu-devel
+BuildRequires: libXrandr-devel
 BuildRequires: libxshmfence-devel
 BuildRequires: elfutils
 BuildRequires: python
@@ -177,6 +178,11 @@ Obsoletes: mesa-dri-filesystem < %{version}-%{release}
 %description filesystem
 Mesa driver filesystem
 
+%package khr-devel
+Summary: Mesa Khronos development headers
+%description khr-devel
+%{summary}
+
 %package dri-drivers
 Summary: Mesa-based DRI drivers
 Group: User Interface/X Hardware Support
@@ -202,6 +208,7 @@ Group: Development/Libraries
 Requires: mesa-libGL = %{version}-%{release}
 Requires: gl-manpages
 Requires: libglvnd-devel%{?_isa}
+Requires: %{name}-khr-devel%{?_isa} = %{?epoch:%{epoch}:}%{version}-%{release}
 Provides: libGL-devel
 
 %description libGL-devel
@@ -212,6 +219,7 @@ Summary: Mesa libEGL development package
 Group: Development/Libraries
 Requires: mesa-libEGL = %{version}-%{release}
 Requires: libglvnd-devel%{?_isa}
+Requires: %{name}-khr-devel%{?_isa} = %{?epoch:%{epoch}:}%{version}-%{release}
 Provides: khrplatform-devel = %{version}-%{release}
 Obsoletes: khrplatform-devel < %{version}-%{release}
 
@@ -222,6 +230,7 @@ Mesa libEGL development package
 Summary: Mesa libGLES development package
 Group: Development/Libraries
 Requires: mesa-libGLES = %{version}-%{release}
+Requires: %{name}-khr-devel%{?_isa} = %{?epoch:%{epoch}:}%{version}-%{release}
 Requires: libglvnd-devel%{?_isa}
 
 %description libGLES-devel
@@ -330,15 +339,15 @@ The drivers with support for the Vulkan API.
 # make sure you run sanitize-tarball.sh on mesa source tarball or next line will exit
 grep -q ^/ src/gallium/auxiliary/vl/vl_decoder.c && exit 1
 %patch1 -p1 -b .nv50rtti
-%patch2 -p1 -b .xshm
 %patch3 -p1 -b .timeout
-%patch4 -p1 -b .noshm
+%patch4 -p1 -b .shmleak
+%patch5 -p1 -b .shmremote
 
 #patch12 -p1 -b .16bpp
 
 %patch15 -p1 -b .hwfloat
 #patch20 -p1 -b .egbe
-%patch21 -p1 -b .glpc
+#%patch21 -p1 -b .glpc
 
 %if 0%{with_private_llvm}
 sed -i 's/\[llvm-config\]/\[llvm-private-config-%{__isa_bits}\]/g' configure.ac
@@ -466,14 +475,14 @@ rm -rf $RPM_BUILD_ROOT
 %postun libglapi -p /sbin/ldconfig
 %post libgbm -p /sbin/ldconfig
 %postun libgbm -p /sbin/ldconfig
-%if !0%{?rhel}
-%post libwayland-egl -p /sbin/ldconfig
-%postun libwayland-egl -p /sbin/ldconfig
-%endif
 %if 0%{?with_vmware}
 %post libxatracker -p /sbin/ldconfig
 %postun libxatracker -p /sbin/ldconfig
 %endif
+
+%files khr-devel
+%dir %{_includedir}/KHR
+%{_includedir}/KHR/khrplatform.h
 
 %files libGL
 %defattr(-,root,root,-)
@@ -505,8 +514,9 @@ rm -rf $RPM_BUILD_ROOT
 
 %files dri-drivers
 %defattr(-,root,root,-)
+%dir %{_datadir}/drirc.d
+%{_datadir}/drirc.d/00-mesa-defaults.conf
 %if %{with_hardware}
-%config(noreplace) %{_sysconfdir}/drirc
 %if !0%{?rhel}
 %{_libdir}/dri/radeon_dri.so
 %{_libdir}/dri/r200_dri.so
@@ -577,8 +587,6 @@ rm -rf $RPM_BUILD_ROOT
 %{_includedir}/EGL/eglmesaext.h
 %{_includedir}/EGL/eglextchromium.h
 %{_includedir}/EGL/eglplatform.h
-%dir %{_includedir}/KHR
-%{_includedir}/KHR/khrplatform.h
 %{_libdir}/pkgconfig/egl.pc
 
 %files libGLES-devel
@@ -617,18 +625,6 @@ rm -rf $RPM_BUILD_ROOT
 %{_includedir}/gbm.h
 %{_libdir}/pkgconfig/gbm.pc
 
-%if %{with wayland}
-%files libwayland-egl
-%defattr(-,root,root,-)
-%{_libdir}/libwayland-egl.so.1
-%{_libdir}/libwayland-egl.so.1.*
-
-%files libwayland-egl-devel
-%defattr(-,root,root,-)
-%{_libdir}/libwayland-egl.so
-%{_libdir}/pkgconfig/wayland-egl.pc
-%endif
-
 %if 0%{?with_vmware}
 %files libxatracker
 %defattr(-,root,root,-)
@@ -650,13 +646,17 @@ rm -rf $RPM_BUILD_ROOT
 
 %if 0%{?with_vulkan}
 %files vulkan-drivers
-%ifarch x86_64
+%ifarch %{ix86} x86_64
 %{_libdir}/libvulkan_intel.so
-%{_datadir}/vulkan/icd.d/intel_icd.x86_64.json
 %endif
 %{_libdir}/libvulkan_radeon.so
 %ifarch x86_64
+%{_datadir}/vulkan/icd.d/intel_icd.x86_64.json
 %{_datadir}/vulkan/icd.d/radeon_icd.x86_64.json
+%endif
+%ifarch %{ix86}
+%{_datadir}/vulkan/icd.d/intel_icd.i686.json
+%{_datadir}/vulkan/icd.d/radeon_icd.i686.json
 %endif
 %ifarch ppc64le
 %{_datadir}/vulkan/icd.d/radeon_icd.powerpc64le.json
@@ -664,6 +664,30 @@ rm -rf $RPM_BUILD_ROOT
 %endif
 
 %changelog
+* Thu Apr 04 2019 Dave Airlie <airlied@redhat.com> - 18.3.4-5
+- fix remote shm patch
+
+* Wed Mar 27 2019 Dave Airlie <airlied@redhat.com> - 18.3.4-4
+- Enable i686 vulkan drivers for 32-bit apps
+
+* Tue Mar 26 2019 Dave Airlie <airlied@redhat.com> - 18.3.4-3
+- fix remote shm
+
+* Fri Mar 01 2019 Dave Airlie <airlied@redhat.com> - 18.3.4-2
+- add shm fix
+
+* Tue Feb 19 2019 Dave Airlie <airlied@redhat.com> - 18.3.4-1
+- mesa 18.3.4
+
+* Wed Feb 13 2019 Dave Airlie <airlied@redhat.com> - 18.3.3-2
+- Add khr-devel to fix buildroot GL/EGL devel (#1676392)
+
+* Wed Feb 06 2019 Dave Airlie <airlied@redhat.com> - 18.3.3-1
+- mesa 18.3.3
+
+* Thu Jan 31 2019 Dave Airlie <airlied@redhat.com> - 18.3.2-1
+- mesa 18.3.2
+
 * Sat Dec 15 2018 Dave Airlie <airlied@redhat.com> - 18.0.5-4
 - disable shm put/get for now it caused regressions
 
